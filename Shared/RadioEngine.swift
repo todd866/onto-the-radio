@@ -68,15 +68,18 @@ public final class RadioEngine {
     public var homeServerConnected: Bool = false
     public var homeServerStatus: String = "Local + Manifold CC0"
     public var playbackNotice: String? = nil
+    public var aiFittedTitles: [String: String] = [:]
+    public var appleMusicCache: [String: AppleMusicLookupResult] = [:]
 
     public let cloudPass = CloudPassStore()
 
     private let defaults: UserDefaults
     private let player = AVPlayer()
-    private var timeObserver: Any?
-    private var endObserver: NSObjectProtocol?
-    private var itemStatusObs: NSKeyValueObservation?
-    private var consecutiveFailures: Int = 0
+    @ObservationIgnored private var timeObserver: Any?
+    @ObservationIgnored private var endObserver: NSObjectProtocol?
+    @ObservationIgnored private var itemStatusObs: NSKeyValueObservation?
+    @ObservationIgnored private var consecutiveFailures: Int = 0
+    @ObservationIgnored private var inFlightFitKeys: Set<String> = []
     private let silentQA: Bool
 
     public init(defaults: UserDefaults = .standard) {
@@ -103,6 +106,13 @@ public final class RadioEngine {
         if let savedDislikes = defaults.stringArray(forKey: "otr.dislikedIDs") {
             self.dislikedIDs = Set(savedDislikes)
         }
+        if let savedFits = defaults.dictionary(forKey: "otr.aiFittedTitles") as? [String: String] {
+            self.aiFittedTitles = savedFits
+        }
+        if let savedAM = defaults.data(forKey: "otr.appleMusicCache"),
+           let decodedAM = try? JSONDecoder().decode([String: AppleMusicLookupResult].self, from: savedAM) {
+            self.appleMusicCache = decodedAM
+        }
 
         self.currentWork = playableQueue.first?.work ?? rankedQueue.first?.work ?? works.first
         if let dur = currentWork?.durationSec {
@@ -127,10 +137,111 @@ public final class RadioEngine {
         var combined: [RadioWork] = []
         for w in localWorks + homeWorks + works {
             if seen.insert(w.workId).inserted {
-                combined.append(w)
+                var resolved = w
+                if let am = appleMusicCache[w.workId] {
+                    if (resolved.artUrl ?? "").isEmpty { resolved.artUrl = am.artUrl }
+                    if (resolved.previewUrl ?? "").isEmpty { resolved.previewUrl = am.previewUrl }
+                    if (resolved.appleMusicUrl ?? "").isEmpty { resolved.appleMusicUrl = am.appleMusicUrl }
+                }
+                combined.append(resolved)
             }
         }
         return combined
+    }
+
+    public var jazzPicks: [RadioWork] {
+        let items = allWorks.filter { w in
+            if w.category == "jazz" { return true }
+            let k = w.kind.lowercased()
+            return k.contains("jazz") || k.contains("post-bop")
+        }
+        return items.sorted { a, b in
+            if a.isPlayable != b.isPlayable { return a.isPlayable && !b.isPlayable }
+            let am = a.creator.lowercased().contains("miles davis")
+            let bm = b.creator.lowercased().contains("miles davis")
+            if am != bm { return am && !bm }
+            let af = !(a.streamUrl ?? "").isEmpty
+            let bf = !(b.streamUrl ?? "").isEmpty
+            if af != bf { return af && !bf }
+            return a.title < b.title
+        }
+    }
+
+    public var classicalPicks: [RadioWork] {
+        let items = allWorks.filter { w in
+            if w.category == "classical" { return true }
+            let k = w.kind.lowercased()
+            return k.contains("classical") || k.contains("chamber") || k.contains("minimalism") || k.contains("impressionist")
+        }
+        return items.sorted { a, b in
+            if a.isPlayable != b.isPlayable { return a.isPlayable && !b.isPlayable }
+            let ah = (a.heaviness ?? 0) + (a.energy ?? 0)
+            let bh = (b.heaviness ?? 0) + (b.energy ?? 0)
+            if abs(ah - bh) > 0.05 { return ah > bh }
+            return a.title < b.title
+        }
+    }
+
+    public var homeQuickPicks: [RadioWork] {
+        let priority = localWorks + homeWorks
+        var picks: [RadioWork] = []
+        var seen = Set<String>()
+        for w in priority where w.isPlayable && seen.insert(w.workId).inserted {
+            picks.append(w)
+            if picks.count >= 4 { return picks }
+        }
+        let gatewayOrder = [
+            "mbid:95142316-7154-4f25-bd45-224352617045", // Miles Davis - So What
+            "mbid:92c48433-431b-52c5-ba0a-02cb4086a048", // Holst - Mars
+            "mbid:e941c1ff-3620-50f4-8590-9df10c78eceb", // BADBADNOTGOOD - Time Moves Slow
+            "mbid:20462048-c5fa-5ab4-8c39-08baa105ed0a", // Prokofiev - Dance of the Knights
+        ]
+        let byId = Dictionary(uniqueKeysWithValues: allWorks.map { ($0.workId, $0) })
+        for gid in gatewayOrder {
+            if let w = byId[gid], w.isPlayable, seen.insert(w.workId).inserted {
+                picks.append(w)
+                if picks.count >= 4 { return picks }
+            }
+        }
+        for entry in playableQueue where seen.insert(entry.work.workId).inserted {
+            picks.append(entry.work)
+            if picks.count >= 4 { break }
+        }
+        return picks
+    }
+
+    public func fittedTitle(for work: RadioWork, maxChars: Int = 24) -> String {
+        if let curated = work.shortTitle, !curated.isEmpty, curated.count <= maxChars,
+           !curated.contains("...") && !curated.contains("…") {
+            return curated
+        }
+        let cacheKey = "\(work.workId):\(maxChars)"
+        if let cached = aiFittedTitles[cacheKey], cached.count <= maxChars,
+           !cached.contains("...") && !cached.contains("…") {
+            return cached
+        }
+        let cleanRaw = work.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanRaw.count <= maxChars && !cleanRaw.contains("...") && !cleanRaw.contains("…") {
+            return cleanRaw
+        }
+        if !silentQA {
+            requestAIFit(for: work, maxChars: maxChars, cacheKey: cacheKey)
+        }
+        return AITitleFitter.heuristicFit(cleanRaw, maxChars: maxChars)
+    }
+
+    private func requestAIFit(for work: RadioWork, maxChars: Int, cacheKey: String) {
+        guard inFlightFitKeys.insert(cacheKey).inserted else { return }
+        let raw = work.title
+        Task {
+            let rewritten = await AITitleFitter.aiRewriteIfAvailable(raw, maxChars: maxChars)
+            await MainActor.run {
+                self.inFlightFitKeys.remove(cacheKey)
+                guard let rewritten, !rewritten.isEmpty, rewritten.count <= maxChars else { return }
+                self.aiFittedTitles[cacheKey] = rewritten
+                self.defaults.set(self.aiFittedTitles, forKey: "otr.aiFittedTitles")
+            }
+        }
     }
 
     public var rankedQueue: [RankedRadioTrack] {
@@ -235,6 +346,37 @@ public final class RadioEngine {
             }
         }
         await cloudPass.refresh()
+        if !silentQA {
+            hydrateAppleMusicIfNeeded()
+        }
+    }
+
+    private func hydrateAppleMusicIfNeeded() {
+        let missing = allWorks.filter { w in
+            w.localBookmark == nil
+                && !w.workId.hasPrefix("home:")
+                && (w.artUrl ?? "").isEmpty
+        }.prefix(8)
+        guard !missing.isEmpty else { return }
+        let snapshot = Array(missing)
+        Task {
+            var changed = false
+            for w in snapshot {
+                if let res = await AppleMusicCatalog.lookup(title: w.shortTitle ?? w.title, creator: w.creator) {
+                    await MainActor.run {
+                        self.appleMusicCache[w.workId] = res
+                    }
+                    changed = true
+                }
+            }
+            if changed {
+                await MainActor.run {
+                    if let encoded = try? JSONEncoder().encode(self.appleMusicCache) {
+                        self.defaults.set(encoded, forKey: "otr.appleMusicCache")
+                    }
+                }
+            }
+        }
     }
 
     public func connectHomeServer(password: String, silent: Bool = false) async {
@@ -379,13 +521,13 @@ public final class RadioEngine {
 
     public func play(_ work: RadioWork, autoStart: Bool = true) {
         guard work.isPlayable else {
-            setNotice("Reference track only — import local audio or connect Home Server to play")
+            setNotice("Tap Apple Music or YouTube in Now Playing to listen")
             return
         }
         currentWork = work
         queuedNextIDs.removeAll { $0 == work.workId }
         elapsedSec = 0
-        durationSec = Double(work.durationSec ?? 180)
+        durationSec = work.isPreviewOnly ? 30 : Double(work.durationSec ?? 180)
         playbackNotice = nil
         consecutiveFailures = 0
 
@@ -540,6 +682,9 @@ public final class RadioEngine {
     private func extractLocalMetadata(for work: RadioWork) {
         guard let url = resolvePlaybackURL(for: work) else { return }
         Task {
+            defer {
+                if url.isFileURL { url.stopAccessingSecurityScopedResource() }
+            }
             let asset = AVURLAsset(url: url)
             let metadata = (try? await asset.load(.commonMetadata)) ?? []
             let durTime = try? await asset.load(.duration)
@@ -613,10 +758,22 @@ public final class RadioEngine {
             _ = u?.startAccessingSecurityScopedResource()
             return u
         }
-        if let s = work.streamUrl, let u = URL(string: s) {
+        if let s = work.streamUrl, !s.isEmpty, let u = URL(string: s) {
+            return u
+        }
+        if let p = work.previewUrl, !p.isEmpty, let u = URL(string: p) {
             return u
         }
         return nil
+    }
+
+    public func playSimilar(to work: RadioWork) {
+        let candidates = nearestWorks(to: work, limit: 10).map(\.work).filter(\.isPlayable)
+        if let first = candidates.first {
+            play(first, autoStart: true)
+        } else {
+            skipNext()
+        }
     }
 
     private func sendHomeEvent(_ work: RadioWork, event: String) {

@@ -199,8 +199,11 @@ public struct RadioScreen: View {
     // MARK: - Home Tab
 
     private func homeBody(stationSize: CGFloat, isCompact: Bool) -> some View {
-        let quickTracks = Array(engine.playableQueue.prefix(isCompact ? 4 : 6))
+        let quickTracks = Array(engine.homeQuickPicks.prefix(isCompact ? 4 : 6))
+        let jazz = Array(engine.jazzPicks.prefix(10))
+        let classical = Array(engine.classicalPicks.prefix(10))
         let stations = engine.allLenses
+        let shelfCardSize: CGFloat = isCompact ? 142 : 158
 
         return ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
@@ -213,7 +216,7 @@ public struct RadioScreen: View {
                             .foregroundStyle(pal.ink)
                         Spacer(minLength: 0)
                         Button("Play all") {
-                            if let first = engine.playableQueue.first?.work {
+                            if let first = quickTracks.first {
                                 engine.play(first, autoStart: true)
                                 engine.showNowPlaying = true
                             }
@@ -231,11 +234,29 @@ public struct RadioScreen: View {
                     .padding(.horizontal, 16)
 
                     VStack(spacing: 4) {
-                        ForEach(quickTracks) { entry in
-                            trackRow(entry.work)
+                        ForEach(quickTracks) { work in
+                            trackRow(work)
                         }
                     }
                     .padding(.horizontal, 16)
+                }
+
+                if !jazz.isEmpty {
+                    visualWorkShelf(
+                        title: "Jazz",
+                        tag: "Miles orbit",
+                        works: jazz,
+                        cardSize: shelfCardSize
+                    )
+                }
+
+                if !classical.isEmpty {
+                    visualWorkShelf(
+                        title: "Classical",
+                        tag: "Heavy & hypnotic",
+                        works: classical,
+                        cardSize: shelfCardSize
+                    )
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -264,8 +285,8 @@ public struct RadioScreen: View {
                                         Text(stationSubtitle(lens))
                                             .font(.system(size: 12.5))
                                             .foregroundStyle(active ? pal.signal : pal.ink2)
-                                            .lineLimit(2)
-                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.85)
                                             .frame(width: stationSize, alignment: .leading)
                                     }
                                 }
@@ -280,6 +301,65 @@ public struct RadioScreen: View {
             .padding(.bottom, 14)
         }
         .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func visualWorkShelf(title: String, tag: String, works: [RadioWork], cardSize: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(pal.ink)
+                Spacer(minLength: 0)
+                Text(tag)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(pal.ink3)
+            }
+            .padding(.horizontal, 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(works) { work in
+                        let isCur = engine.currentWork?.workId == work.workId
+                        Button {
+                            if work.isPlayable {
+                                engine.play(work, autoStart: true)
+                            } else {
+                                engine.currentWork = work
+                                engine.nowPlayingTab = .why
+                            }
+                            engine.showNowPlaying = true
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                RadioCoverArt(
+                                    seed: work.workId,
+                                    colorOverride: work.colorHex,
+                                    artURL: work.artUrl.flatMap(URL.init(string:)),
+                                    localArtData: work.localArtData,
+                                    energy: work.energy ?? 0.35,
+                                    size: cardSize,
+                                    isActive: isCur
+                                )
+                                Text(engine.fittedTitle(for: work, maxChars: 19))
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                    .foregroundStyle(isCur ? pal.signal : pal.ink)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.84)
+                                    .frame(width: cardSize, alignment: .leading)
+
+                                Text(AITitleFitter.heuristicFit(work.hook ?? shortCreatorName(work.creator), maxChars: 22))
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(pal.ink2)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                                    .frame(width: cardSize, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
     }
 
     private var moodStrip: some View {
@@ -338,14 +418,16 @@ public struct RadioScreen: View {
                     .opacity(work.isPlayable ? 1.0 : 0.72)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(work.title)
+                        Text(engine.fittedTitle(for: work, maxChars: 24))
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(isCurrent ? pal.signal : (work.isPlayable ? pal.ink : pal.ink2))
                             .lineLimit(1)
-                        Text(shortCreatorName(work.creator))
-                            .font(.system(size: 13))
+                            .minimumScaleFactor(0.84)
+                        Text(AITitleFitter.compactSubtitle(creator: shortCreatorName(work.creator), hook: work.hook, maxChars: 34))
+                            .font(.system(size: 12.5))
                             .foregroundStyle(pal.ink2)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                     Spacer(minLength: 4)
                 }
@@ -635,14 +717,16 @@ public struct RadioScreen: View {
                             size: 42
                         )
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(cur?.title ?? "Onto Radio")
+                            Text(cur.map { engine.fittedTitle(for: $0, maxChars: 20) } ?? "Onto Radio")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(pal.ink)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.84)
                             Text(shortCreatorName(cur?.creator ?? ""))
                                 .font(.system(size: 12))
                                 .foregroundStyle(pal.ink2)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                         }
                         Spacer(minLength: 0)
                     }
@@ -691,10 +775,12 @@ public struct RadioScreen: View {
 
     private func stationSubtitle(_ lens: RadioLens) -> String {
         switch lens.id {
+        case "lens:radio:jazz-miles-orbit": return "Miles · Rhodes & groove"
+        case "lens:radio:classical-heavy": return "5/4 thunder & synth"
         case "lens:radio:late-wire": return "Ambient · Nocturnal piano"
         case "lens:radio:motorik-pulse": return "Krautrock · Synth drive"
         case "lens:radio:chamber-focus": return "Goldberg · Cello suites"
-        default: return lens.summary
+        default: return AITitleFitter.heuristicFit(lens.summary, maxChars: 24)
         }
     }
 }
@@ -705,6 +791,7 @@ public struct NowPlayingView: View {
     @Bindable var engine: RadioEngine
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.openURL) private var openURL
 
     public init(engine: RadioEngine) {
         self.engine = engine
@@ -845,14 +932,15 @@ public struct NowPlayingView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     RecoverableTitle(
                         text: cur?.title ?? "Onto Radio",
-                        font: .system(size: 22, weight: .bold, design: .serif),
+                        font: .system(size: 21, weight: .bold, design: .serif),
                         color: pal.ink,
-                        lineLimit: 2
+                        lineLimit: 3
                     )
-                    Text(shortCreatorName(cur?.creator ?? ""))
-                        .font(.system(size: 15))
+                    Text(creatorAndHookLine)
+                        .font(.system(size: 14.5))
                         .foregroundStyle(pal.ink2)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
 
                 actionPillsRow
@@ -876,12 +964,13 @@ public struct NowPlayingView: View {
                     text: cur?.title ?? "Onto Radio",
                     font: .system(size: 21, weight: .bold, design: .serif),
                     color: pal.ink,
-                    lineLimit: 2
+                    lineLimit: 3
                 )
-                Text(shortCreatorName(cur?.creator ?? ""))
+                Text(creatorAndHookLine)
                     .font(.system(size: 14))
                     .foregroundStyle(pal.ink2)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
 
             actionPillsRow
@@ -957,6 +1046,36 @@ public struct NowPlayingView: View {
                 .background(pal.panel, in: Capsule(style: .continuous))
                 .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
 
+                if let amStr = cur?.appleMusicUrl, let amURL = URL(string: amStr) {
+                    Button {
+                        openURL(amURL)
+                    } label: {
+                        Label("Apple Music", systemImage: "music.note")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(pal.ink)
+                            .padding(.horizontal, 12)
+                            .frame(height: 32)
+                            .background(pal.panel, in: Capsule(style: .continuous))
+                            .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if let cur, let ytURL = AppleMusicCatalog.youtubeMusicSearchURL(title: cur.shortTitle ?? cur.title, creator: cur.creator) {
+                    Button {
+                        openURL(ytURL)
+                    } label: {
+                        Label("YouTube", systemImage: "play.rectangle")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(pal.ink)
+                            .padding(.horizontal, 12)
+                            .frame(height: 32)
+                            .background(pal.panel, in: Capsule(style: .continuous))
+                            .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Button {
                     engine.nowPlayingTab = .why
                     engine.showNowPlayingDrawer = true
@@ -970,22 +1089,17 @@ public struct NowPlayingView: View {
                         .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
                 }
                 .buttonStyle(.plain)
-
-                Button {
-                    engine.nowPlayingTab = .trust
-                    engine.showNowPlayingDrawer = true
-                } label: {
-                    Label("Verified", systemImage: "checkmark.seal.fill")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(pal.good)
-                        .padding(.horizontal, 12)
-                        .frame(height: 32)
-                        .background(pal.panel, in: Capsule(style: .continuous))
-                        .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
-                }
-                .buttonStyle(.plain)
             }
         }
+    }
+
+    private var creatorAndHookLine: String {
+        guard let cur else { return "" }
+        return AITitleFitter.compactSubtitle(
+            creator: shortCreatorName(cur.creator),
+            hook: cur.hook,
+            maxChars: 38
+        )
     }
 
     private var scrubberView: some View {
@@ -1022,7 +1136,7 @@ public struct NowPlayingView: View {
             HStack {
                 Text(formatTime(engine.elapsedSec))
                 Spacer()
-                Text(formatTime(engine.durationSec))
+                Text(cur?.isPreviewOnly == true ? "0:30 · Preview" : formatTime(engine.durationSec))
             }
             .font(.system(size: 11.5, design: .monospaced).monospacedDigit())
             .foregroundStyle(pal.ink2)
@@ -1183,11 +1297,12 @@ public struct NowPlayingView: View {
                                 isActive: isCur
                             )
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.work.title)
+                                Text(engine.fittedTitle(for: entry.work, maxChars: 24))
                                     .font(.system(size: 14.5, weight: isCur ? .semibold : .medium))
                                     .foregroundStyle(isCur ? pal.signal : pal.ink)
                                     .lineLimit(1)
-                                Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.year)")
+                                    .minimumScaleFactor(0.84)
+                                Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.originBadge)")
                                     .font(.system(size: 12))
                                     .foregroundStyle(pal.ink2)
                                     .lineLimit(1)
@@ -1228,10 +1343,11 @@ public struct NowPlayingView: View {
                                 size: 38
                             )
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(entry.work.title)
+                                Text(engine.fittedTitle(for: entry.work, maxChars: 24))
                                     .font(.system(size: 13.5))
                                     .foregroundStyle(pal.ink2)
                                     .lineLimit(1)
+                                    .minimumScaleFactor(0.84)
                                 Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.year)")
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(pal.ink3)
@@ -1298,10 +1414,11 @@ public struct NowPlayingView: View {
                                             size: 38
                                         )
                                         VStack(alignment: .leading, spacing: 1) {
-                                            Text(entry.work.title)
+                                            Text(engine.fittedTitle(for: entry.work, maxChars: 24))
                                                 .font(.system(size: 13.5, weight: .medium))
                                                 .foregroundStyle(pal.ink)
                                                 .lineLimit(1)
+                                                .minimumScaleFactor(0.84)
                                             Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.originBadge)")
                                                 .font(.system(size: 11.5))
                                                 .foregroundStyle(pal.ink3)
@@ -1477,7 +1594,7 @@ struct RadioSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Home radio server (6IAN / music-core)") {
+                Section("Home radio server (music-core)") {
                     TextField("https://your-radio.example.com", text: $engine.homeServerURL)
                         #if !os(macOS)
                         .textInputAutocapitalization(.never)
@@ -1487,7 +1604,7 @@ struct RadioSettingsSheet: View {
                     SecureField("Server password (saved in Keychain)", text: $serverPassword)
                         .autocorrectionDisabled()
                     HStack {
-                        Button(busyConnect ? "Connecting..." : (engine.homeServerConnected ? "Reconnect" : "Connect")) {
+                        Button(busyConnect ? "Connecting" : (engine.homeServerConnected ? "Reconnect" : "Connect")) {
                             busyConnect = true
                             Task {
                                 await engine.connectHomeServer(password: serverPassword)

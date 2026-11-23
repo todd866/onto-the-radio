@@ -44,6 +44,11 @@ public struct RadioWork: Identifiable, Codable, Equatable, Sendable {
     public var sourceLabel: String?
     public var pickToken: String?
     public var localArtData: Data?
+    public var shortTitle: String?
+    public var hook: String?
+    public var category: String?
+    public var previewUrl: String?
+    public var appleMusicUrl: String?
 
     public init(
         workId: String,
@@ -66,7 +71,12 @@ public struct RadioWork: Identifiable, Codable, Equatable, Sendable {
         colorHex: String? = nil,
         sourceLabel: String? = nil,
         pickToken: String? = nil,
-        localArtData: Data? = nil
+        localArtData: Data? = nil,
+        shortTitle: String? = nil,
+        hook: String? = nil,
+        category: String? = nil,
+        previewUrl: String? = nil,
+        appleMusicUrl: String? = nil
     ) {
         self.workId = workId
         self.title = title
@@ -89,18 +99,32 @@ public struct RadioWork: Identifiable, Codable, Equatable, Sendable {
         self.sourceLabel = sourceLabel
         self.pickToken = pickToken
         self.localArtData = localArtData
+        self.shortTitle = shortTitle
+        self.hook = hook
+        self.category = category
+        self.previewUrl = previewUrl
+        self.appleMusicUrl = appleMusicUrl
     }
 
     public var id: String { workId }
 
     public var isPlayable: Bool {
-        localBookmark != nil || (streamUrl != nil && !(streamUrl ?? "").isEmpty)
+        localBookmark != nil
+            || !(streamUrl ?? "").isEmpty
+            || !(previewUrl ?? "").isEmpty
+    }
+
+    public var isPreviewOnly: Bool {
+        localBookmark == nil
+            && (streamUrl ?? "").isEmpty
+            && !(previewUrl ?? "").isEmpty
     }
 
     public var originBadge: String {
         if let sourceLabel, !sourceLabel.isEmpty { return sourceLabel }
         if localBookmark != nil { return "Local" }
-        if isPlayable { return "CC0" }
+        if !(streamUrl ?? "").isEmpty { return "Full" }
+        if !(previewUrl ?? "").isEmpty { return "Preview" }
         return "Pool"
     }
 }

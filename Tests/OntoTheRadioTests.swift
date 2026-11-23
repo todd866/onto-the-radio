@@ -12,8 +12,8 @@ final class OntoTheRadioTests: XCTestCase {
         let ranked = RadioMath.rankTracks(
             tracks: tracks,
             lens: chamber,
-            maxEnergy: 0.9,
-            maxHeaviness: 0.9
+            maxEnergy: 1.0,
+            maxHeaviness: 1.0
         )
         XCTAssertEqual(ranked.count, tracks.count)
         XCTAssertEqual(ranked.first?.work.workId, "mbid:7f5c1a38-44d3-4259-9a81-16f17eb8bc31")
@@ -33,14 +33,23 @@ final class OntoTheRadioTests: XCTestCase {
     }
 
     func testBundledStreamsUseVerifiedNonBrokenWikimediaMP3URLs() {
-        XCTAssertEqual(ManifoldRadioClient.bundledWorks.count, 4)
+        XCTAssertGreaterThanOrEqual(ManifoldRadioClient.bundledWorks.count, 15)
         for work in ManifoldRadioClient.bundledWorks {
-            let url = work.streamUrl ?? ""
-            XCTAssertTrue(url.hasPrefix("https://"))
-            XCTAssertTrue(url.hasSuffix(".mp3"))
-            XCTAssertFalse(url.contains("/9/98/Gymnopedie_No_1.ogg"))
-            XCTAssertFalse(url.contains("_Goldberg_Variations%2C_BWV_988_-_01_Aria.flac"))
-            XCTAssertFalse(url.contains("/4/47/BWV_1007_-_Prelude.ogg"))
+            XCTAssertTrue(work.isPlayable, "Bundled work must be playable: \(work.title)")
+            if let url = work.streamUrl, !url.isEmpty {
+                XCTAssertTrue(url.hasPrefix("https://"))
+                XCTAssertTrue(url.hasSuffix(".mp3"))
+                XCTAssertFalse(url.contains("/9/98/Gymnopedie_No_1.ogg"))
+                XCTAssertFalse(url.contains("_Goldberg_Variations%2C_BWV_988_-_01_Aria.flac"))
+                XCTAssertFalse(url.contains("/4/47/BWV_1007_-_Prelude.ogg"))
+            }
+            if let preview = work.previewUrl, !preview.isEmpty {
+                XCTAssertTrue(preview.hasPrefix("https://"))
+            }
+            XCTAssertFalse((work.shortTitle ?? "").isEmpty, "Missing shortTitle for \(work.title)")
+            XCTAssertFalse((work.hook ?? "").isEmpty, "Missing hook for \(work.title)")
+            XCTAssertFalse((work.shortTitle ?? "").contains("..."))
+            XCTAssertFalse((work.shortTitle ?? "").contains("…"))
             XCTAssertNotNil(work.x)
             XCTAssertNotNil(work.y)
         }
@@ -82,8 +91,10 @@ final class OntoTheRadioTests: XCTestCase {
         engine.toggleLike(targetTrack)
         XCTAssertTrue(engine.likedIDs.contains(targetTrack.workId))
 
-        engine.tuneToMap(x: -0.86, y: -0.22)
-        XCTAssertEqual(engine.currentWork?.workId, "mbid:b30c5632-0842-4c9a-9459-6b525a67b87d")
+        engine.tuneToMap(x: -0.6284, y: 0.4621)
+        XCTAssertEqual(engine.currentWork?.workId, "mbid:f0d2b6c2-9f4e-4b3b-891c-8398409e2736")
+        engine.tuneToMap(x: 0.4934, y: 0.2367)
+        XCTAssertEqual(engine.currentWork?.workId, "mbid:f4b1a3d0-52e1-5218-a4e1-2830a0b74211")
 
         engine.selectMood(.chill)
         XCTAssertEqual(engine.moodPreset, .chill)
@@ -94,6 +105,63 @@ final class OntoTheRadioTests: XCTestCase {
         XCTAssertEqual(engine.activeTab, .map)
         engine.activeTab = .library
         XCTAssertEqual(engine.activeTab, .library)
+    }
+
+    func testAITitleFitterProducesZeroEllipsesAndFitsBudget() {
+        let samples = [
+            ("Goldberg Variations, BWV 988: Aria", 19),
+            ("The Planets, Op. 32: I. Mars, the Bringer of War", 19),
+            ("Romeo and Juliet, Op. 64: Dance of the Knights", 22),
+            ("Générique (Ascenseur pour l'échafaud)", 19),
+            ("Cello Suite No. 1 in G Major, Prelude", 19),
+            ("Recomposed: Vivaldi Four Seasons – Spring 1 - Remastered", 24),
+            ("Gymnopédie No. 1 (Lent et douloureux)", 19),
+        ]
+        for (raw, budget) in samples {
+            let fitted = AITitleFitter.heuristicFit(raw, maxChars: budget)
+            XCTAssertFalse(fitted.isEmpty, "Empty fitted result for \(raw)")
+            XCTAssertLessThanOrEqual(fitted.count, budget, "Exceeded budget for \(raw) -> \(fitted)")
+            XCTAssertFalse(fitted.contains("..."), "Ellipsis in fitted title: \(fitted)")
+            XCTAssertFalse(fitted.contains("…"), "Unicode ellipsis in fitted title: \(fitted)")
+        }
+
+        let subtitleSamples: [(String, String?, Int)] = [
+            ("Johann Sebastian Bach · Kimiko Ishizaka (CC0)", "Crisp solo keyboard", 34),
+            ("Modest Mussorgsky", "Dark orchestral menace", 34),
+            ("Miles Davis", "Electric Rhodes trance", 34),
+            ("Antonio Vivaldi", "Baroque speed shred", 22),
+        ]
+        for (creator, hook, budget) in subtitleSamples {
+            let sub = AITitleFitter.compactSubtitle(creator: creator, hook: hook, maxChars: budget)
+            XCTAssertFalse(sub.isEmpty)
+            XCTAssertLessThanOrEqual(sub.count, budget, "Subtitle exceeded budget: \(sub)")
+            XCTAssertFalse(sub.contains("..."))
+            XCTAssertFalse(sub.contains("…"))
+        }
+    }
+
+    @MainActor
+    func testJazzAndClassicalGatewayShelvesPopulatedAndPlayable() {
+        let suiteName = "com.iantodd.ontotheradio.gateway.\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: suiteName)!
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
+        let engine = RadioEngine(defaults: suite)
+        XCTAssertFalse(engine.jazzPicks.isEmpty)
+        XCTAssertFalse(engine.classicalPicks.isEmpty)
+        XCTAssertTrue(engine.jazzPicks.contains(where: { $0.creator.localizedCaseInsensitiveContains("Miles Davis") }))
+        XCTAssertTrue(engine.classicalPicks.contains(where: { $0.title.localizedCaseInsensitiveContains("Mars") }))
+        XCTAssertTrue(engine.jazzPicks.contains(where: \.isPlayable))
+        XCTAssertTrue(engine.classicalPicks.contains(where: \.isPlayable))
+        XCTAssertTrue(engine.allLenses.contains(where: { $0.id == "lens:radio:jazz-miles-orbit" }))
+        XCTAssertTrue(engine.allLenses.contains(where: { $0.id == "lens:radio:classical-heavy" }))
+
+        for work in engine.jazzPicks + engine.classicalPicks {
+            let fitted = engine.fittedTitle(for: work, maxChars: 19)
+            XCTAssertLessThanOrEqual(fitted.count, 19, "Shelf title too long: \(fitted)")
+            XCTAssertFalse(fitted.contains("..."))
+            XCTAssertFalse(fitted.contains("…"))
+        }
     }
 
     @MainActor
