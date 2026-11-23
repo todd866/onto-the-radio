@@ -1,0 +1,122 @@
+name: OntoTheRadio
+options:
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+    tvOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: U87MQBZKJ5
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "2"
+targets:
+  OntoTheRadio:
+    type: application
+    platform: iOS
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    sources:
+      - path: App/OntoTheRadioApp.swift
+      - path: App/Assets.xcassets
+      - path: App/PrivacyInfo.xcprivacy
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.iantodd.ontotheradio
+        PRODUCT_NAME: OntoTheRadio
+        INFOPLIST_FILE: App/Info-iOS.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    scheme:
+      testTargets:
+        - OntoTheRadioTests
+      storeKitConfiguration: OntoRadio.storekit
+  OntoTheRadioMac:
+    type: application
+    platform: macOS
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    sources:
+      - path: App/OntoTheRadioApp.swift
+      - path: App/Assets.xcassets
+      - path: App/PrivacyInfo.xcprivacy
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.iantodd.ontotheradio.mac
+        PRODUCT_NAME: "Onto the Radio"
+        INFOPLIST_FILE: App/Info-macOS.plist
+        CODE_SIGN_ENTITLEMENTS: App/OntoTheRadioMac.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        ENABLE_HARDENED_RUNTIME: YES
+  OntoTheRadioTV:
+    type: application
+    platform: tvOS
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    sources:
+      - path: App/OntoTheRadioApp.swift
+      - path: App/PrivacyInfo.xcprivacy
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.iantodd.ontotheradio.tv
+        PRODUCT_NAME: OntoTheRadioTV
+        INFOPLIST_FILE: App/Info-tvOS.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        TARGETED_DEVICE_FAMILY: "3"
+        TVOS_DEPLOYMENT_TARGET: "18.0"
+  OntoTheRadioTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: OntoTheRadio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.iantodd.ontotheradio.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/OntoTheRadio.app/OntoTheRadio"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  OntoTheRadio:
+    build:
+      targets:
+        OntoTheRadio: all
+        OntoTheRadioTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - OntoTheRadioTests
+    archive:
+      config: Release
+  OntoTheRadioMac:
+    build:
+      targets:
+        OntoTheRadioMac: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  OntoTheRadioTV:
+    build:
+      targets:
+        OntoTheRadioTV: all
+    run:
+      config: Debug
+    archive:
+      config: Release

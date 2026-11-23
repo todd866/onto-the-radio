@@ -1,0 +1,78 @@
+{
+  "identifier" : "A1B2C3D4-E5F6-4789-9012-3456789ABCDE",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6700000001",
+    "_developerTeamID" : "U87MQBZKJ5"
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21400001",
+      "localizations" : [
+
+      ],
+      "name" : "Onto Cloud",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : true,
+          "groupNumber" : 1,
+          "internalID" : "6700000002",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Instant Manifold embedding sync, community station lenses, and cross-device memory.",
+              "displayName" : "Onto Cloud Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.iantodd.ontotheradio.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Onto Cloud Monthly",
+          "subscriptionGroupID" : "21400001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "39.99",
+          "familyShareable" : true,
+          "groupNumber" : 1,
+          "internalID" : "6700000003",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Annual Manifold embedding sync, community station lenses, and cross-device memory.",
+              "displayName" : "Onto Cloud Annual",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.iantodd.ontotheradio.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Onto Cloud Annual",
+          "subscriptionGroupID" : "21400001",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

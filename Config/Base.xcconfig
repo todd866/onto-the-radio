@@ -1,0 +1,3 @@
+// Default Manifold hub endpoint (split // for xcconfig comment syntax)
+MANIFOLD_DEFAULT_HUB = https:/$()/manifold-chi.vercel.app
+#include? "~/.config/onto-the-radio/private.xcconfig"

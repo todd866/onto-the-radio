@@ -1,0 +1,5 @@
+OntoTheRadio.xcodeproj/
+build/
+DerivedData/
+.DS_Store
+shots/
