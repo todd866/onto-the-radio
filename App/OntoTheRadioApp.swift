@@ -8,7 +8,7 @@ struct OntoTheRadioApp: App {
         WindowGroup {
             RadioScreen(engine: engine)
                 #if os(macOS)
-                .frame(minWidth: 460, idealWidth: 520, minHeight: 560, idealHeight: 620)
+                .frame(minWidth: 440, idealWidth: 920, minHeight: 580, idealHeight: 680)
                 #endif
         }
     }

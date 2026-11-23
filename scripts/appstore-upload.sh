@@ -1,15 +1,15 @@
 #!/bin/zsh
-# Archive and export/upload Onto the Radio (iOS, tvOS, macOS) to App Store Connect / TestFlight.
-# Requires an "Apple Distribution: Ian Todd (U87MQBZKJ5)" certificate in Keychain and
-# an App Store Connect record for com.iantodd.ontotheradio / com.iantodd.ontotheradio.tv.
+# Archive and export/upload Onto the Radio (iOS, optional tvOS) to App Store Connect / TestFlight.
+# Requires Xcode Apple account / Apple Distribution signing for team U87MQBZKJ5.
 #
 # Usage:
 #   scripts/appstore-upload.sh archive     # builds signed .xcarchive bundles in build/archives/
-#   scripts/appstore-upload.sh upload      # exports and uploads directly to App Store Connect
+#   scripts/appstore-upload.sh upload      # exports and uploads iOS build (plus tvOS if registered)
 set -euo pipefail
 cd "${0:A:h}/.."
 
 MODE="${1:-archive}"
+TARGET="${2:-ios}"
 mkdir -p build/archives build/export
 
 xcodegen generate --spec project.yml --project . >/dev/null
@@ -39,21 +39,30 @@ xcodebuild -project OntoTheRadio.xcodeproj -scheme OntoTheRadio \
   -archivePath build/archives/OntoTheRadio-iOS.xcarchive \
   -allowProvisioningUpdates archive
 
-echo "== archiving OntoTheRadioTV (tvOS)"
-xcodebuild -project OntoTheRadio.xcodeproj -scheme OntoTheRadioTV \
-  -configuration Release -destination 'generic/platform=tvOS' \
-  -archivePath build/archives/OntoTheRadio-tvOS.xcarchive \
-  -allowProvisioningUpdates archive
+if [[ "$TARGET" == "all" || "$TARGET" == "tvos" ]]; then
+  echo "== archiving OntoTheRadioTV (tvOS)"
+  xcodebuild -project OntoTheRadio.xcodeproj -scheme OntoTheRadioTV \
+    -configuration Release -destination 'generic/platform=tvOS' \
+    -archivePath build/archives/OntoTheRadio-tvOS.xcarchive \
+    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+    archive
+fi
 
-# Note: W40 workaround — Xcode's IDEDistributionCreateIPAStep runs /usr/bin/rsync -8aPhhE, which
-# breaks if Homebrew rsync 3.5.x is first in PATH (--extended-attributes unknown). Keep system PATH
-# for exportArchive.
+# W40 workaround: Xcode's IDEDistributionCreateIPAStep invokes /usr/bin/rsync -8aPhhE, which
+# breaks if Homebrew rsync 3.5.x is first in PATH (--extended-attributes unknown).
 if [[ "$MODE" == "upload" ]]; then
+  echo "== uploading OntoTheRadio (iOS) to App Store Connect / TestFlight"
   PATH=/usr/bin:/bin:/usr/sbin:/sbin xcodebuild -exportArchive \
     -archivePath build/archives/OntoTheRadio-iOS.xcarchive \
-    -exportOptionsPlist build/ExportOptions.plist -exportPath build/export/ios -allowProvisioningUpdates
-  PATH=/usr/bin:/bin:/usr/sbin:/sbin xcodebuild -exportArchive \
-    -archivePath build/archives/OntoTheRadio-tvOS.xcarchive \
-    -exportOptionsPlist build/ExportOptions.plist -exportPath build/export/tvos -allowProvisioningUpdates
-  echo "Uploaded iOS & tvOS builds to App Store Connect / TestFlight."
+    -exportOptionsPlist build/ExportOptions.plist \
+    -exportPath build/export/ios \
+    -allowProvisioningUpdates
+  if [[ "$TARGET" == "all" || "$TARGET" == "tvos" ]]; then
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin xcodebuild -exportArchive \
+      -archivePath build/archives/OntoTheRadio-tvOS.xcarchive \
+      -exportOptionsPlist build/ExportOptions.plist \
+      -exportPath build/export/tvos \
+      -allowProvisioningUpdates
+  fi
+  echo "Uploaded to App Store Connect / TestFlight."
 fi

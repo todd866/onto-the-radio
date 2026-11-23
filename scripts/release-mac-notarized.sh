@@ -42,7 +42,17 @@ codesign --verify --deep --strict "$APP"
 
 ditto -c -k --keepParent "$APP" "$WORK/upload.zip"
 echo "== notarize with Apple"
-xcrun notarytool submit "$WORK/upload.zip" --keychain-profile "$PROFILE" --wait --output-format json > "$WORK/notary.json"
+if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+  xcrun notarytool submit "$WORK/upload.zip" --keychain-profile "$PROFILE" --wait --output-format json > "$WORK/notary.json"
+elif [[ -n "${ONTO_APPLE_ID:-}" && -n "${ONTO_NOTARY_PASSWORD_ITEM:-}" ]]; then
+  echo "notary profile $PROFILE unavailable; using saved keychain item $ONTO_NOTARY_PASSWORD_ITEM"
+  PW=$(security find-generic-password -s "$ONTO_NOTARY_PASSWORD_ITEM" -a "$ONTO_APPLE_ID" -w)
+  xcrun notarytool submit "$WORK/upload.zip" --apple-id "$ONTO_APPLE_ID" --team-id "$TEAM_ID" --password "$PW" --wait --output-format json > "$WORK/notary.json"
+  unset PW
+else
+  echo "Missing notarytool profile $PROFILE (set ONTO_NOTARY_PROFILE or ONTO_APPLE_ID + ONTO_NOTARY_PASSWORD_ITEM)" >&2
+  exit 1
+fi
 
 notary_status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$WORK/notary.json")
 [[ "$notary_status" == "Accepted" ]] || { cat "$WORK/notary.json"; exit 1; }
