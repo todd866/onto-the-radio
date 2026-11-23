@@ -1,0 +1,10 @@
+# Internal or unreviewed paths excluded from public snapshots (one path or glob per line).
+.claude
+.fleet
+.playwright-mcp
+shots
+docs/superpowers
+docs/TODO.md
+build
+DerivedData
+scripts/public-images-approved.txt
