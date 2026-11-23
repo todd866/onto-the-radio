@@ -43,6 +43,7 @@ public struct RadioWork: Identifiable, Codable, Equatable, Sendable {
     public var colorHex: String?
     public var sourceLabel: String?
     public var pickToken: String?
+    public var localArtData: Data?
 
     public init(
         workId: String,
@@ -64,7 +65,8 @@ public struct RadioWork: Identifiable, Codable, Equatable, Sendable {
         artUrl: String? = nil,
         colorHex: String? = nil,
         sourceLabel: String? = nil,
-        pickToken: String? = nil
+        pickToken: String? = nil,
+        localArtData: Data? = nil
     ) {
         self.workId = workId
         self.title = title
@@ -86,6 +88,7 @@ public struct RadioWork: Identifiable, Codable, Equatable, Sendable {
         self.colorHex = colorHex
         self.sourceLabel = sourceLabel
         self.pickToken = pickToken
+        self.localArtData = localArtData
     }
 
     public var id: String { workId }

@@ -84,6 +84,16 @@ final class OntoTheRadioTests: XCTestCase {
 
         engine.tuneToMap(x: -0.86, y: -0.22)
         XCTAssertEqual(engine.currentWork?.workId, "mbid:b30c5632-0842-4c9a-9459-6b525a67b87d")
+
+        engine.selectMood(.chill)
+        XCTAssertEqual(engine.moodPreset, .chill)
+        engine.selectMood(.chill)
+        XCTAssertEqual(engine.moodPreset, .all)
+
+        engine.activeTab = .map
+        XCTAssertEqual(engine.activeTab, .map)
+        engine.activeTab = .library
+        XCTAssertEqual(engine.activeTab, .library)
     }
 
     @MainActor
@@ -138,11 +148,15 @@ final class OntoTheRadioTests: XCTestCase {
         controller.view.bounds = CGRect(origin: .zero, size: size)
         controller.view.frame = CGRect(origin: .zero, size: size)
         let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
         window.overrideUserInterfaceStyle = style
         window.rootViewController = controller
         window.isHidden = false
         window.layoutIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
 
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = 2

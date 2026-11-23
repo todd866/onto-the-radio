@@ -3,9 +3,24 @@ import Foundation
 import MediaPlayer
 import Observation
 
+public enum RadioRootTab: String, CaseIterable, Identifiable {
+    case home = "Home"
+    case map = "Map"
+    case library = "Library"
+
+    public var id: String { rawValue }
+}
+
+public enum NowPlayingStageMode: String, CaseIterable, Identifiable {
+    case song = "Song"
+    case map = "Map"
+
+    public var id: String { rawValue }
+}
+
 public enum NowPlayingTab: String, CaseIterable, Identifiable {
-    case why = "Why this"
     case upNext = "Up next"
+    case why = "Why this"
     case map = "Map"
     case trust = "Trust"
 
@@ -31,6 +46,8 @@ public final class RadioEngine {
     public var maxEnergy: Double = 1.0
     public var maxHeaviness: Double = 1.0
     public var searchQuery: String = ""
+    public var activeTab: RadioRootTab = .home
+    public var showSearch: Bool = false
 
     public var likedIDs: Set<String> = []
     public var dislikedIDs: Set<String> = []
@@ -45,7 +62,9 @@ public final class RadioEngine {
     public var showSettings: Bool = false
     public var showImporter: Bool = false
     public var showNowPlaying: Bool = false
-    public var nowPlayingTab: NowPlayingTab = .why
+    public var showNowPlayingDrawer: Bool = false
+    public var nowPlayingStage: NowPlayingStageMode = .song
+    public var nowPlayingTab: NowPlayingTab = .upNext
     public var homeServerConnected: Bool = false
     public var homeServerStatus: String = "Local + Manifold CC0"
     public var playbackNotice: String? = nil
@@ -304,9 +323,10 @@ public final class RadioEngine {
     }
 
     public func selectMood(_ preset: RadioMoodPreset) {
-        moodPreset = preset
-        maxEnergy = preset.maxEnergy
-        maxHeaviness = preset.maxHeaviness
+        let resolved: RadioMoodPreset = (preset == moodPreset && preset != .all) ? .all : preset
+        moodPreset = resolved
+        maxEnergy = resolved.maxEnergy
+        maxHeaviness = resolved.maxHeaviness
         if let cur = currentWork, !playableQueue.contains(where: { $0.work.workId == cur.workId }),
            let top = playableQueue.first?.work {
             play(top, autoStart: isPlaying)
@@ -494,11 +514,67 @@ public final class RadioEngine {
         }
         if !added.isEmpty {
             localWorks.insert(contentsOf: added, at: 0)
-            if let encoded = try? JSONEncoder().encode(localWorks) {
-                defaults.set(encoded, forKey: "otr.localWorks")
-            }
+            persistLocalWorks()
             if let first = added.first {
                 play(first, autoStart: true)
+            }
+            for work in added {
+                extractLocalMetadata(for: work)
+            }
+        }
+    }
+
+    private func persistLocalWorks() {
+        let lightweight = localWorks.map { item -> RadioWork in
+            var copy = item
+            if (copy.localArtData?.count ?? 0) > 120_000 {
+                copy.localArtData = nil
+            }
+            return copy
+        }
+        if let encoded = try? JSONEncoder().encode(lightweight) {
+            defaults.set(encoded, forKey: "otr.localWorks")
+        }
+    }
+
+    private func extractLocalMetadata(for work: RadioWork) {
+        guard let url = resolvePlaybackURL(for: work) else { return }
+        Task {
+            let asset = AVURLAsset(url: url)
+            let metadata = (try? await asset.load(.commonMetadata)) ?? []
+            let durTime = try? await asset.load(.duration)
+
+            var extractedTitle: String?
+            var extractedArtist: String?
+            var extractedArt: Data?
+
+            for item in metadata {
+                guard let key = item.commonKey else { continue }
+                switch key {
+                case .commonKeyTitle:
+                    if let s = try? await item.load(.stringValue), !s.isEmpty { extractedTitle = s }
+                case .commonKeyArtist:
+                    if let s = try? await item.load(.stringValue), !s.isEmpty { extractedArtist = s }
+                case .commonKeyArtwork:
+                    if let d = try? await item.load(.dataValue), !d.isEmpty { extractedArt = d }
+                default:
+                    break
+                }
+            }
+
+            let durSec: Int? = if let sec = durTime?.seconds, sec.isFinite, sec > 0 { Int(sec.rounded()) } else { nil }
+            await MainActor.run {
+                guard let idx = self.localWorks.firstIndex(where: { $0.workId == work.workId }) else { return }
+                if let t = extractedTitle { self.localWorks[idx].title = t }
+                if let a = extractedArtist { self.localWorks[idx].creator = a }
+                if let art = extractedArt { self.localWorks[idx].localArtData = art }
+                if let d = durSec { self.localWorks[idx].durationSec = d }
+                let updated = self.localWorks[idx]
+                if self.currentWork?.workId == updated.workId {
+                    self.currentWork = updated
+                    if let d = durSec { self.durationSec = Double(d) }
+                }
+                self.persistLocalWorks()
             }
         }
     }

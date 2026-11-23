@@ -1,8 +1,18 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+public enum LibraryFilter: String, CaseIterable, Identifiable {
+    case all = "All"
+    case liked = "Liked"
+    case local = "Local"
+    case pool = "Pool"
+
+    public var id: String { rawValue }
+}
+
 public struct RadioScreen: View {
     @Bindable var engine: RadioEngine
+    @State private var libraryFilter: LibraryFilter = .all
     @Environment(\.colorScheme) private var scheme
 
     public init(engine: RadioEngine) {
@@ -16,48 +26,38 @@ public struct RadioScreen: View {
     public var body: some View {
         GeometryReader { geo in
             let isCompact = geo.size.width < 680
-            let sleeveSize: CGFloat = isCompact ? 124 : 148
-            let stationSize: CGFloat = isCompact ? 116 : 148
-            let mapHeight: CGFloat = isCompact ? 104 : 168
+            let stationSize: CGFloat = isCompact ? 154 : 172
 
             ZStack(alignment: .bottom) {
                 pal.bg.ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     topBar
-                    Rectangle().fill(pal.line).frame(height: 0.5)
 
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: isCompact ? 12 : 18) {
-                            moodStrip
-
-                            if !engine.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                searchResultsSection(isCompact: isCompact)
-                            } else {
-                                quickPicksSection(tileSize: sleeveSize, isCompact: isCompact)
-                                signedLensesSection(tileSize: stationSize, isCompact: isCompact)
-                                mapPreviewSection(mapHeight: mapHeight, isCompact: isCompact)
-                            }
+                    if engine.showSearch || !engine.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        searchResultsBody
+                    } else {
+                        switch engine.activeTab {
+                        case .home:
+                            homeBody(stationSize: stationSize, isCompact: isCompact)
+                        case .map:
+                            mapBody
+                        case .library:
+                            libraryBody
                         }
-                        .padding(.top, 8)
-                        .padding(.bottom, 82)
                     }
-                    .scrollBounceBehavior(.basedOnSize)
+
+                    bottomDock
                 }
 
-                VStack(spacing: 6) {
-                    if let notice = engine.playbackNotice {
-                        Text(notice)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(pal.bg)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(pal.ink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .padding(.horizontal, 14)
-                    }
-                    miniPlayerBar
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 8)
+                if let notice = engine.playbackNotice {
+                    Text(notice)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(pal.bg)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(pal.ink, in: Capsule(style: .continuous))
+                        .padding(.bottom, 122)
                 }
             }
             .tint(pal.signal)
@@ -94,432 +94,553 @@ public struct RadioScreen: View {
         }
     }
 
+    // MARK: - Top Bar
+
     private var topBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                engine.searchQuery = ""
-                engine.clearMapTarget()
-            } label: {
-                HStack(spacing: 0) {
-                    Text("Onto")
+        HStack(spacing: 12) {
+            if engine.showSearch {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14))
+                        .foregroundStyle(pal.ink3)
+                        .accessibilityHidden(true)
+                    TextField("Search songs, artists, moods", text: $engine.searchQuery)
+                        .font(.system(size: 15))
                         .foregroundStyle(pal.ink)
-                    Text("Radio")
-                        .foregroundStyle(pal.signal)
-                }
-                .font(.system(size: 21, weight: .black, design: .serif))
-                .italic()
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Onto Radio Home")
-
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
-                    .foregroundStyle(pal.ink3)
-                    .accessibilityHidden(true)
-                TextField("Search", text: $engine.searchQuery)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(pal.ink)
-                    #if !os(macOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                    .autocorrectionDisabled()
-                if !engine.searchQuery.isEmpty {
-                    Button {
-                        engine.searchQuery = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(pal.ink3)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(pal.panel, in: Capsule(style: .continuous))
-            .overlay {
-                Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
-            }
-
-            #if !os(tvOS)
-            Button {
-                engine.showImporter = true
-            } label: {
-                Image(systemName: "folder.badge.plus")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(pal.ink)
-                    .frame(width: 34, height: 34)
-                    .background(pal.panel, in: Circle())
-                    .overlay { Circle().strokeBorder(pal.line, lineWidth: 0.75) }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Add local audio files")
-            #endif
-
-            Button {
-                engine.showSettings = true
-            } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(pal.ink)
-                        .frame(width: 34, height: 34)
-                        .background(pal.panel, in: Circle())
-                        .overlay { Circle().strokeBorder(pal.line, lineWidth: 0.75) }
-                    if engine.homeServerConnected {
-                        Circle()
-                            .fill(pal.good)
-                            .frame(width: 8, height: 8)
-                            .offset(x: 1, y: 1)
+                        #if !os(macOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .autocorrectionDisabled()
+                    if !engine.searchQuery.isEmpty {
+                        Button {
+                            engine.searchQuery = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(pal.ink3)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear search")
                     }
                 }
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(pal.panel, in: Capsule(style: .continuous))
+
+                Button("Cancel") {
+                    engine.searchQuery = ""
+                    engine.showSearch = false
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(pal.ink)
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    engine.activeTab = .home
+                    engine.clearMapTarget()
+                } label: {
+                    HStack(spacing: 8) {
+                        ZStack {
+                            Circle()
+                                .fill(pal.signal)
+                                .frame(width: 26, height: 26)
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(pal.signalInk)
+                                .offset(x: 1)
+                        }
+                        Text("Onto")
+                            .font(.system(size: 21, weight: .bold, design: .serif))
+                            .foregroundStyle(pal.ink)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Onto Home")
+
+                Spacer(minLength: 0)
+
+                Button {
+                    engine.showSearch = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(pal.ink)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Search")
+
+                Button {
+                    engine.showSettings = true
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(pal.ink)
+                            .frame(width: 34, height: 34)
+                            .background(pal.panel, in: Circle())
+                        if engine.homeServerConnected {
+                            Circle()
+                                .fill(pal.good)
+                                .frame(width: 8, height: 8)
+                                .offset(x: 1, y: 1)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
         }
-        .padding(.horizontal, 14)
-        .frame(height: 48)
+        .padding(.horizontal, 16)
+        .frame(height: 46)
+    }
+
+    // MARK: - Home Tab
+
+    private func homeBody(stationSize: CGFloat, isCompact: Bool) -> some View {
+        let quickTracks = Array(engine.playableQueue.prefix(isCompact ? 4 : 6))
+        let stations = engine.allLenses
+
+        return ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+                moodStrip
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .center) {
+                        Text("Quick picks")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(pal.ink)
+                        Spacer(minLength: 0)
+                        Button("Play all") {
+                            if let first = engine.playableQueue.first?.work {
+                                engine.play(first, autoStart: true)
+                                engine.showNowPlaying = true
+                            }
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(pal.panel, in: Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+
+                    VStack(spacing: 4) {
+                        ForEach(quickTracks) { entry in
+                            trackRow(entry.work)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Stations")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 16)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 14) {
+                            ForEach(stations) { lens in
+                                let active = engine.activeLens?.id == lens.id
+                                Button {
+                                    engine.selectLens(lens)
+                                    engine.showNowPlaying = true
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        RadioCoverArt(
+                                            seed: lens.id,
+                                            colorOverride: lens.colorHex,
+                                            artURL: lens.artUrl.flatMap(URL.init(string:)),
+                                            stationTitle: lens.name,
+                                            size: stationSize,
+                                            isActive: active
+                                        )
+                                        Text(stationSubtitle(lens))
+                                            .font(.system(size: 12.5))
+                                            .foregroundStyle(active ? pal.signal : pal.ink2)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                            .frame(width: stationSize, alignment: .leading)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 14)
+        }
+        .scrollBounceBehavior(.basedOnSize)
     }
 
     private var moodStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let presets = RadioMoodPreset.allCases.filter { $0 != .all }
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(RadioMoodPreset.allCases) { preset in
+                ForEach(presets) { preset in
                     let active = engine.moodPreset == preset
                     Button {
                         engine.selectMood(preset)
                     } label: {
                         Text(preset.rawValue)
-                            .font(.system(size: 12.5, weight: active ? .semibold : .regular, design: .monospaced))
+                            .font(.system(size: 13.5, weight: .medium))
                             .foregroundStyle(active ? pal.bg : pal.ink)
-                            .padding(.horizontal, 12)
-                            .frame(height: 30)
+                            .padding(.horizontal, 14)
+                            .frame(height: 32)
                             .background(
                                 active ? pal.ink : pal.panel,
                                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                             )
                             .overlay {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(active ? pal.ink : pal.line, lineWidth: 0.8)
+                                    .strokeBorder(active ? pal.ink : pal.line, lineWidth: 0.75)
                             }
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
         }
     }
 
-    private func quickPicksSection(tileSize: CGFloat, isCompact: Bool) -> some View {
-        let items = engine.playableQueue
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Quick picks")
-                    .font(.system(size: isCompact ? 19 : 21, weight: .bold, design: .serif))
-                    .foregroundStyle(pal.ink)
-                Spacer(minLength: 0)
-                Text("\(items.count) playable")
-                    .font(.system(size: 11, design: .monospaced).monospacedDigit())
-                    .foregroundStyle(pal.ink3)
-            }
-            .padding(.horizontal, 14)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(items) { entry in
-                        trackTile(entry.work, size: tileSize)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-        }
-    }
-
-    private func trackTile(_ work: RadioWork, size: CGFloat) -> some View {
+    private func trackRow(_ work: RadioWork, showPoolPill: Bool = false) -> some View {
         let isCurrent = engine.currentWork?.workId == work.workId
-        return Button {
-            engine.play(work, autoStart: true)
-            engine.showNowPlaying = true
-        } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                RadioSleeve(
-                    title: work.title,
-                    subtitle: work.year > 0 ? "\(work.year)" : work.kind,
-                    seed: work.workId,
-                    colorOverride: work.colorHex,
-                    artURL: work.artUrl.flatMap(URL.init(string:)),
-                    size: size,
-                    badge: work.originBadge,
-                    isActive: isCurrent
-                )
-                Text(work.title)
-                    .font(.system(size: 13, weight: isCurrent ? .semibold : .medium))
-                    .foregroundStyle(isCurrent ? pal.signal : pal.ink)
-                    .lineLimit(2)
-                    .frame(width: size, alignment: .leading)
-                Text(shortCreatorName(work.creator))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(pal.ink3)
-                    .lineLimit(1)
-                    .frame(width: size, alignment: .leading)
-            }
-        }
-        .buttonStyle(.plain)
-        #if !os(tvOS)
-        .contextMenu {
-            Button("Play now", systemImage: "play.fill") {
-                engine.play(work, autoStart: true)
-            }
-            Button("Play next", systemImage: "text.insert") {
-                engine.queueNext(work)
-            }
-            Button(
-                engine.likedIDs.contains(work.workId) ? "Unlike" : "Like",
-                systemImage: engine.likedIDs.contains(work.workId) ? "hand.thumbsup.fill" : "hand.thumbsup"
-            ) {
-                engine.toggleLike(work)
-            }
-            Button("Less like this", systemImage: "hand.thumbsdown") {
-                engine.dislikeAndSkip(work)
-            }
-        }
-        #endif
-    }
-
-    private func signedLensesSection(tileSize: CGFloat, isCompact: Bool) -> some View {
-        let stations = engine.allLenses
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Signed lenses")
-                    .font(.system(size: isCompact ? 19 : 21, weight: .bold, design: .serif))
-                    .foregroundStyle(pal.ink)
-                Spacer(minLength: 0)
-                Label("Ed25519", systemImage: "checkmark.seal.fill")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(pal.good)
-            }
-            .padding(.horizontal, 14)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(stations) { lens in
-                        let active = engine.activeLens?.id == lens.id
-                        let rate = Int(((lens.completionRate ?? 0.90) * 100).rounded())
-                        let subs = lens.subscribers ?? 0
-                        Button {
-                            engine.selectLens(lens)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                RadioSleeve(
-                                    title: lens.name,
-                                    subtitle: "@\(lens.issuerHandle)",
-                                    seed: lens.id,
-                                    colorOverride: lens.colorHex,
-                                    artURL: lens.artUrl.flatMap(URL.init(string:)),
-                                    size: tileSize,
-                                    badge: "\(rate)%",
-                                    isActive: active
-                                )
-                                Text(lens.name)
-                                    .font(.system(size: 13, weight: active ? .semibold : .medium))
-                                    .foregroundStyle(active ? pal.signal : pal.ink)
-                                    .lineLimit(1)
-                                    .frame(width: tileSize, alignment: .leading)
-                                Text("\(rate)% fit · \(subs) sub")
-                                    .font(.system(size: 11, design: .monospaced).monospacedDigit())
-                                    .foregroundStyle(pal.ink3)
-                                    .lineLimit(1)
-                                    .frame(width: tileSize, alignment: .leading)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-        }
-    }
-
-    private func mapPreviewSection(mapHeight: CGFloat, isCompact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("On the map")
-                    .font(.system(size: isCompact ? 19 : 21, weight: .bold, design: .serif))
-                    .foregroundStyle(pal.ink)
-                Spacer(minLength: 0)
-                Button("Open map") {
-                    engine.nowPlayingTab = .map
+        return HStack(spacing: 12) {
+            Button {
+                if work.isPlayable {
+                    engine.play(work, autoStart: true)
+                    engine.showNowPlaying = true
+                } else {
+                    engine.currentWork = work
+                    engine.nowPlayingTab = .why
                     engine.showNowPlaying = true
                 }
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(pal.signal)
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
+            } label: {
+                HStack(spacing: 12) {
+                    RadioCoverArt(
+                        seed: work.workId,
+                        colorOverride: work.colorHex,
+                        artURL: work.artUrl.flatMap(URL.init(string:)),
+                        localArtData: work.localArtData,
+                        energy: work.energy ?? 0.35,
+                        size: 48,
+                        isActive: isCurrent
+                    )
+                    .opacity(work.isPlayable ? 1.0 : 0.72)
 
-            VStack(spacing: 0) {
-                LatentMapCanvas(
-                    works: engine.allWorks,
-                    currentWork: engine.currentWork,
-                    trail: Array(engine.playableQueue.prefix(6).map(\.work)),
-                    activeLens: engine.activeLens,
-                    mapTarget: engine.mapTarget
-                ) { x, y in
-                    engine.tuneToMap(x: x, y: y)
-                }
-                .frame(height: mapHeight)
-
-                Rectangle().fill(pal.line).frame(height: 0.5)
-
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(pal.signal)
-                        .frame(width: 7, height: 7)
-                    if let label = engine.mapTargetLabel {
-                        Text("Tuned: \(label)")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(pal.ink)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(work.title)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(isCurrent ? pal.signal : (work.isPlayable ? pal.ink : pal.ink2))
                             .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Button("Reset") {
-                            engine.clearMapTarget()
-                        }
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(pal.signal)
-                        .buttonStyle(.plain)
-                    } else if let cur = engine.currentWork {
-                        Text("\(engine.allWorks.count) coordinates · \(cur.title)")
-                            .font(.system(size: 11, design: .monospaced))
+                        Text(shortCreatorName(work.creator))
+                            .font(.system(size: 13))
                             .foregroundStyle(pal.ink2)
                             .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Text("Tap to steer")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(pal.ink3)
                     }
+                    Spacer(minLength: 4)
                 }
-                .padding(.horizontal, 12)
-                .frame(height: 28)
-                .background(pal.panel)
+                .contentShape(Rectangle())
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(pal.line, lineWidth: 0.75)
-            }
-            .padding(.horizontal, 14)
-        }
-    }
+            .buttonStyle(.plain)
 
-    private func searchResultsSection(isCompact: Bool) -> some View {
-        let playable = engine.filteredPlayable
-        let discovery = engine.filteredDiscovery
-        let cols = [GridItem(.adaptive(minimum: isCompact ? 150 : 168), spacing: 12, alignment: .top)]
-
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Playable matches")
-                    .font(.system(size: 19, weight: .bold, design: .serif))
-                    .foregroundStyle(pal.ink)
-                Spacer(minLength: 0)
-                Text("\(playable.count)")
-                    .font(.system(size: 12, design: .monospaced).monospacedDigit())
-                    .foregroundStyle(pal.ink3)
-            }
-            .padding(.horizontal, 14)
-
-            if playable.isEmpty {
-                Text("No matching playable files. Add audio files or connect your home server.")
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(pal.ink2)
-                    .padding(.horizontal, 14)
-            } else {
-                LazyVGrid(columns: cols, spacing: 14) {
-                    ForEach(playable) { entry in
-                        trackTile(entry.work, size: isCompact ? 156 : 168)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-
-            if !discovery.isEmpty {
-                HStack {
-                    Text("Manifold reference pool")
-                        .font(.system(size: 17, weight: .bold, design: .serif))
-                        .foregroundStyle(pal.ink2)
-                    Spacer(minLength: 0)
-                    Text("\(discovery.count)")
-                        .font(.system(size: 12, design: .monospaced).monospacedDigit())
-                        .foregroundStyle(pal.ink3)
-                }
-                .padding(.horizontal, 14)
-                .padding(.top, 6)
-
-                VStack(spacing: 0) {
-                    ForEach(discovery.prefix(12)) { entry in
-                        discoveryRow(entry)
-                        Rectangle().fill(pal.line).frame(height: 0.5)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-        }
-    }
-
-    private func discoveryRow(_ entry: RankedRadioTrack) -> some View {
-        HStack(spacing: 10) {
-            RadioSleeve(
-                title: entry.work.title,
-                subtitle: String(entry.work.year),
-                seed: entry.work.workId,
-                size: 40,
-                compact: true
-            )
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.work.title)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(pal.ink)
-                    .lineLimit(1)
-                Text("\(entry.work.creator) · \(entry.work.year)")
+            if showPoolPill && !work.isPlayable {
+                Text("Coords")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(pal.ink3)
-                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(pal.panel, in: Capsule(style: .continuous))
+            } else {
+                #if !os(tvOS)
+                Menu {
+                    if work.isPlayable {
+                        Button("Play now", systemImage: "play.fill") {
+                            engine.play(work, autoStart: true)
+                        }
+                        Button("Play next", systemImage: "text.insert") {
+                            engine.queueNext(work)
+                        }
+                    }
+                    Button(
+                        engine.likedIDs.contains(work.workId) ? "Remove like" : "Like",
+                        systemImage: engine.likedIDs.contains(work.workId) ? "hand.thumbsup.fill" : "hand.thumbsup"
+                    ) {
+                        engine.toggleLike(work)
+                    }
+                    Button("Less like this", systemImage: "hand.thumbsdown") {
+                        engine.dislikeAndSkip(work)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15))
+                        .foregroundStyle(pal.ink3)
+                        .frame(width: 32, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("More for \(work.title)")
+                #endif
             }
-            Spacer(minLength: 6)
-            Text(String(format: "%.2f", entry.score))
-                .font(.system(size: 11.5, design: .monospaced).monospacedDigit())
-                .foregroundStyle(pal.ink2)
         }
-        .padding(.vertical, 7)
+        .frame(height: 56)
+    }
+
+    // MARK: - Map Tab
+
+    private var mapBody: some View {
+        ZStack(alignment: .topLeading) {
+            LatentMapCanvas(
+                works: engine.allWorks,
+                currentWork: engine.currentWork,
+                trail: Array(engine.playableQueue.prefix(6).map(\.work)),
+                activeLens: engine.activeLens,
+                mapTarget: engine.mapTarget
+            ) { x, y in
+                engine.tuneToMap(x: x, y: y)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(pal.line, lineWidth: 0.75)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
+
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(pal.signal)
+                    .frame(width: 7, height: 7)
+                Text(engine.mapTargetLabel ?? (engine.currentWork?.title ?? "Tap anywhere to steer"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(1)
+                if engine.mapTarget != nil {
+                    Button("Reset") {
+                        engine.clearMapTarget()
+                    }
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(pal.signal)
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(pal.bg.opacity(0.92), in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
+            }
+            .padding(.top, 18)
+            .padding(.leading, 24)
+        }
+    }
+
+    // MARK: - Library Tab
+
+    private var libraryBody: some View {
+        let items: [RadioWork] = switch libraryFilter {
+        case .all:
+            engine.playableQueue.map(\.work)
+        case .liked:
+            engine.allWorks.filter { engine.likedIDs.contains($0.workId) }
+        case .local:
+            engine.localWorks
+        case .pool:
+            engine.discoveryWorks.map(\.work)
+        }
+
+        return ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    #if !os(tvOS)
+                    Button {
+                        engine.showImporter = true
+                    } label: {
+                        Label("Add files", systemImage: "plus")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(pal.bg)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background(pal.ink, in: Capsule(style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    #endif
+
+                    Button {
+                        engine.showSettings = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            if engine.homeServerConnected {
+                                Circle().fill(pal.good).frame(width: 7, height: 7)
+                            }
+                            Text(engine.homeServerConnected ? "Home connected" : "Home server")
+                        }
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(pal.panel, in: Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(LibraryFilter.allCases) { f in
+                            let active = libraryFilter == f
+                            Button {
+                                libraryFilter = f
+                            } label: {
+                                Text(f.rawValue)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(active ? pal.bg : pal.ink)
+                                    .padding(.horizontal, 13)
+                                    .frame(height: 30)
+                                    .background(active ? pal.ink : pal.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .strokeBorder(active ? pal.ink : pal.line, lineWidth: 0.75)
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+
+                if items.isEmpty {
+                    Text(libraryEmptyMessage)
+                        .font(.system(size: 14))
+                        .foregroundStyle(pal.ink2)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                } else {
+                    LazyVStack(spacing: 4) {
+                        ForEach(items) { work in
+                            trackRow(work, showPoolPill: libraryFilter == .pool)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 16)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private var libraryEmptyMessage: String {
+        switch libraryFilter {
+        case .liked: return "Tracks you like appear here."
+        case .local: return "Import audio files from Files to play offline."
+        case .pool: return "Manifold reference coordinates will appear after sync."
+        case .all: return "No playable tracks found."
+        }
+    }
+
+    // MARK: - Search Body
+
+    private var searchResultsBody: some View {
+        let playable = engine.filteredPlayable
+        let discovery = engine.filteredDiscovery
+
+        return ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(playable) { entry in
+                    trackRow(entry.work)
+                }
+                if !discovery.isEmpty {
+                    Text("Reference pool")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(pal.ink2)
+                        .padding(.top, 12)
+                    ForEach(discovery.prefix(12)) { entry in
+                        trackRow(entry.work, showPoolPill: true)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
+        }
+    }
+
+    // MARK: - Docked Mini-Player + Bottom Tab Bar
+
+    private var bottomDock: some View {
+        VStack(spacing: 0) {
+            miniPlayerBar
+            Rectangle().fill(pal.line).frame(height: 0.5)
+            HStack(spacing: 0) {
+                tabButton(.home, icon: "house.fill")
+                tabButton(.map, icon: "circle.hexagongrid")
+                tabButton(.library, icon: "music.note.list")
+            }
+            .frame(height: 50)
+            .background(pal.bg)
+        }
+    }
+
+    private func tabButton(_ tab: RadioRootTab, icon: String) -> some View {
+        let active = engine.activeTab == tab && !engine.showSearch
+        return Button {
+            engine.showSearch = false
+            engine.searchQuery = ""
+            engine.activeTab = tab
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: active ? .semibold : .regular))
+                Text(tab.rawValue)
+                    .font(.system(size: 10.5, weight: active ? .semibold : .regular))
+            }
+            .foregroundStyle(active ? pal.signal : pal.ink3)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var miniPlayerBar: some View {
         let cur = engine.currentWork
         let progress = engine.durationSec > 0 ? min(1, max(0, engine.elapsedSec / engine.durationSec)) : 0
         return ZStack(alignment: .bottomLeading) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Button {
                     engine.showNowPlaying = true
                 } label: {
-                    HStack(spacing: 10) {
-                        RadioSleeve(
-                            title: cur?.title ?? "Onto",
-                            subtitle: cur?.creator ?? "",
+                    HStack(spacing: 12) {
+                        RadioCoverArt(
                             seed: cur?.workId ?? "idle",
                             colorOverride: cur?.colorHex,
                             artURL: cur?.artUrl.flatMap(URL.init(string:)),
-                            size: 44,
-                            compact: true
+                            localArtData: cur?.localArtData,
+                            energy: cur?.energy ?? 0.35,
+                            size: 42
                         )
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(cur?.title ?? "Select track")
+                            Text(cur?.title ?? "Onto Radio")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(pal.ink)
                                 .lineLimit(1)
-                            Text("\(shortCreatorName(cur?.creator ?? "")) · \(engine.activeLens?.name ?? "")")
-                                .font(.system(size: 11.5, design: .monospaced))
+                            Text(shortCreatorName(cur?.creator ?? ""))
+                                .font(.system(size: 12))
                                 .foregroundStyle(pal.ink2)
                                 .lineLimit(1)
                         }
@@ -554,31 +675,31 @@ public struct RadioScreen: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Next track")
             }
-            .padding(.horizontal, 8)
-            .frame(height: 60)
+            .padding(.horizontal, 14)
+            .frame(height: 58)
 
             GeometryReader { geo in
                 Rectangle()
                     .fill(pal.signal)
-                    .frame(width: geo.size.width * progress, height: 2.5)
+                    .frame(width: geo.size.width * progress, height: 2)
             }
-            .frame(height: 2.5)
+            .frame(height: 2)
             .allowsHitTesting(false)
         }
-        .background(pal.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(pal.line, lineWidth: 1)
+        .background(pal.panel)
+    }
+
+    private func stationSubtitle(_ lens: RadioLens) -> String {
+        switch lens.id {
+        case "lens:radio:late-wire": return "Ambient · Nocturnal piano"
+        case "lens:radio:motorik-pulse": return "Krautrock · Synth drive"
+        case "lens:radio:chamber-focus": return "Goldberg · Cello suites"
+        default: return lens.summary
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: Color.black.opacity(scheme == .dark ? 0.45 : 0.14), radius: 12, y: 4)
     }
 }
 
-private func shortCreatorName(_ raw: String) -> String {
-    let head = raw.split(separator: "·", maxSplits: 1).first.map(String.init) ?? raw
-    return head.trimmingCharacters(in: .whitespacesAndNewlines)
-}
+// MARK: - Hero Artwork Now Playing
 
 public struct NowPlayingView: View {
     @Bindable var engine: RadioEngine
@@ -612,26 +733,47 @@ public struct NowPlayingView: View {
                     headerBar
 
                     if isWide {
-                        HStack(alignment: .top, spacing: 24) {
-                            playerColumnWide
-                                .frame(width: 296)
-                            detailPanel(cornerAll: true)
+                        HStack(alignment: .top, spacing: 26) {
+                            wideLeftColumn(artSize: min(310, geo.size.height * 0.45))
+                                .frame(width: 318)
+                            drawerPanelContent
+                                .background(pal.panel)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(pal.line, lineWidth: 0.75)
+                                }
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 18)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 20)
                     } else {
-                        VStack(spacing: 10) {
-                            playerClusterCompact
-                                .padding(.horizontal, 16)
-                            detailPanel(cornerAll: false)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        }
+                        compactPlayerBody(heroSize: min(geo.size.width - 56, max(250, geo.size.height - 418)))
                     }
                 }
             }
         }
         .tint(pal.signal)
+        .sheet(isPresented: $engine.showNowPlayingDrawer) {
+            NavigationStack {
+                drawerPanelContent
+                    .background(pal.panel)
+                    .navigationTitle(engine.nowPlayingTab.rawValue)
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { engine.showNowPlayingDrawer = false }
+                        }
+                    }
+            }
+            .tint(pal.signal)
+            #if !os(tvOS)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            #endif
+        }
     }
 
     private var headerBar: some View {
@@ -641,7 +783,7 @@ public struct NowPlayingView: View {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(pal.ink)
                     .frame(width: 40, height: 36)
                     .contentShape(Rectangle())
@@ -651,10 +793,27 @@ public struct NowPlayingView: View {
 
             Spacer(minLength: 0)
 
-            Text(engine.activeLens?.name ?? "Now playing")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(pal.ink2)
-                .lineLimit(1)
+            HStack(spacing: 2) {
+                ForEach(NowPlayingStageMode.allCases) { mode in
+                    let active = engine.nowPlayingStage == mode
+                    Button {
+                        engine.nowPlayingStage = mode
+                    } label: {
+                        Text(mode.rawValue)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(active ? pal.bg : pal.ink2)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 5)
+                            .background(active ? pal.ink : Color.clear, in: Capsule(style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(2)
+            .background(pal.panel.opacity(0.9), in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
+            }
 
             Spacer(minLength: 0)
 
@@ -670,109 +829,163 @@ public struct NowPlayingView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Settings")
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .frame(height: 44)
     }
 
-    private var playerClusterCompact: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 14) {
-                RadioSleeve(
-                    title: cur?.title ?? "Onto the Radio",
-                    subtitle: cur?.year ?? 0 > 0 ? "\(cur?.year ?? 0)" : (cur?.kind ?? ""),
-                    seed: cur?.workId ?? "idle",
-                    colorOverride: cur?.colorHex,
-                    artURL: cur?.artUrl.flatMap(URL.init(string:)),
-                    size: 112,
-                    badge: cur?.originBadge
-                )
+    private func compactPlayerBody(heroSize: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 8)
 
+            heroStage(size: heroSize)
+
+            Spacer(minLength: 14)
+
+            VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     RecoverableTitle(
-                        text: cur?.title ?? "Select track",
-                        font: .system(size: 18, weight: .bold, design: .serif),
+                        text: cur?.title ?? "Onto Radio",
+                        font: .system(size: 22, weight: .bold, design: .serif),
                         color: pal.ink,
                         lineLimit: 2
                     )
-                    Text(cur?.creator ?? "")
-                        .font(.system(size: 12, design: .monospaced))
+                    Text(shortCreatorName(cur?.creator ?? ""))
+                        .font(.system(size: 15))
                         .foregroundStyle(pal.ink2)
-                        .lineLimit(2)
-
-                    HStack(spacing: 6) {
-                        if let src = cur?.originBadge {
-                            factPill(src)
-                        }
-                        if let year = cur?.year, year > 0 {
-                            factPill(String(year))
-                        }
-                        if let score = currentScore {
-                            factPill("\(Int((score * 100).rounded()))%")
-                        }
-                    }
-                    .padding(.top, 2)
+                        .lineLimit(1)
                 }
-            }
 
-            scrubberView
-            transportCluster
+                actionPillsRow
+                scrubberView
+                transportCluster
+            }
+            .padding(.horizontal, 24)
+
+            Spacer(minLength: 12)
+
+            collapsedDrawerDock
         }
     }
 
-    private var playerColumnWide: some View {
+    private func wideLeftColumn(artSize: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            RadioSleeve(
-                title: cur?.title ?? "Onto the Radio",
-                subtitle: cur?.year ?? 0 > 0 ? "\(cur?.year ?? 0)" : (cur?.kind ?? ""),
-                seed: cur?.workId ?? "idle",
-                colorOverride: cur?.colorHex,
-                artURL: cur?.artUrl.flatMap(URL.init(string:)),
-                size: 272,
-                badge: cur?.originBadge
-            )
+            heroStage(size: artSize)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 RecoverableTitle(
-                    text: cur?.title ?? "Select track",
-                    font: .system(size: 22, weight: .bold, design: .serif),
+                    text: cur?.title ?? "Onto Radio",
+                    font: .system(size: 21, weight: .bold, design: .serif),
                     color: pal.ink,
                     lineLimit: 2
                 )
-                Text(cur?.creator ?? "")
-                    .font(.system(size: 13, design: .monospaced))
+                Text(shortCreatorName(cur?.creator ?? ""))
+                    .font(.system(size: 14))
                     .foregroundStyle(pal.ink2)
-                    .lineLimit(2)
-
-                HStack(spacing: 6) {
-                    if let src = cur?.originBadge {
-                        factPill(src)
-                    }
-                    if let year = cur?.year, year > 0 {
-                        factPill(String(year))
-                    }
-                    if let score = currentScore {
-                        factPill("\(Int((score * 100).rounded()))%")
-                    }
-                }
-                .padding(.top, 4)
+                    .lineLimit(1)
             }
 
+            actionPillsRow
             scrubberView
             transportCluster
             Spacer(minLength: 0)
         }
     }
 
-    private func factPill(_ label: String) -> some View {
-        Text(label)
-            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-            .foregroundStyle(pal.ink2)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(pal.panel, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(pal.line, lineWidth: 0.6)
+    @ViewBuilder
+    private func heroStage(size: CGFloat) -> some View {
+        if engine.nowPlayingStage == .map {
+            LatentMapCanvas(
+                works: engine.allWorks,
+                currentWork: cur,
+                trail: Array(engine.playableQueue.prefix(6).map(\.work)),
+                activeLens: engine.activeLens,
+                mapTarget: engine.mapTarget
+            ) { x, y in
+                engine.tuneToMap(x: x, y: y)
             }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
+            }
+        } else {
+            RadioCoverArt(
+                seed: cur?.workId ?? "idle",
+                colorOverride: cur?.colorHex,
+                artURL: cur?.artUrl.flatMap(URL.init(string:)),
+                localArtData: cur?.localArtData,
+                energy: cur?.energy ?? 0.35,
+                size: size,
+                cornerRadius: 12
+            )
+        }
+    }
+
+    private var actionPillsRow: some View {
+        let isLiked = cur.map { engine.likedIDs.contains($0.workId) } ?? false
+        let isDisliked = cur.map { engine.dislikedIDs.contains($0.workId) } ?? false
+
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                HStack(spacing: 0) {
+                    Button {
+                        if let cur { engine.toggleLike(cur) }
+                    } label: {
+                        Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .font(.system(size: 14))
+                            .foregroundStyle(isLiked ? pal.signal : pal.ink)
+                            .frame(width: 42, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isLiked ? "Unlike" : "Like")
+
+                    Rectangle()
+                        .fill(pal.line)
+                        .frame(width: 0.75, height: 18)
+
+                    Button {
+                        if let cur { engine.dislikeAndSkip(cur) }
+                    } label: {
+                        Image(systemName: isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                            .font(.system(size: 14))
+                            .foregroundStyle(isDisliked ? pal.bad : pal.ink)
+                            .frame(width: 42, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dislike and skip")
+                }
+                .background(pal.panel, in: Capsule(style: .continuous))
+                .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+
+                Button {
+                    engine.nowPlayingTab = .why
+                    engine.showNowPlayingDrawer = true
+                } label: {
+                    Label("Why this", systemImage: "sparkles")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 12)
+                        .frame(height: 32)
+                        .background(pal.panel, in: Capsule(style: .continuous))
+                        .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    engine.nowPlayingTab = .trust
+                    engine.showNowPlayingDrawer = true
+                } label: {
+                    Label("Verified", systemImage: "checkmark.seal.fill")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(pal.good)
+                        .padding(.horizontal, 12)
+                        .frame(height: 32)
+                        .background(pal.panel, in: Capsule(style: .continuous))
+                        .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private var scrubberView: some View {
@@ -811,26 +1024,24 @@ public struct NowPlayingView: View {
                 Spacer()
                 Text(formatTime(engine.durationSec))
             }
-            .font(.system(size: 11, design: .monospaced).monospacedDigit())
+            .font(.system(size: 11.5, design: .monospaced).monospacedDigit())
             .foregroundStyle(pal.ink2)
         }
     }
 
     private var transportCluster: some View {
-        let isLiked = cur.map { engine.likedIDs.contains($0.workId) } ?? false
-        let isDisliked = cur.map { engine.dislikedIDs.contains($0.workId) } ?? false
-
-        return HStack {
+        HStack {
             Button {
-                if let cur { engine.dislikeAndSkip(cur) }
+                engine.nowPlayingTab = .upNext
+                engine.showNowPlayingDrawer = true
             } label: {
-                Image(systemName: isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                    .font(.system(size: 17))
-                    .foregroundStyle(isDisliked ? pal.bad : pal.ink2)
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 18))
+                    .foregroundStyle(pal.ink2)
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Dislike and skip")
+            .accessibilityLabel("Up next queue")
 
             Spacer()
 
@@ -838,9 +1049,9 @@ public struct NowPlayingView: View {
                 engine.skipPrevious()
             } label: {
                 Image(systemName: "backward.end.fill")
-                    .font(.system(size: 20))
+                    .font(.system(size: 24))
                     .foregroundStyle(pal.ink)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 48, height: 48)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Previous track")
@@ -851,9 +1062,9 @@ public struct NowPlayingView: View {
                 engine.togglePlay()
             } label: {
                 Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 25, weight: .bold))
                     .foregroundStyle(pal.bg)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 66, height: 66)
                     .background(pal.ink, in: Circle())
             }
             .buttonStyle(.plain)
@@ -865,9 +1076,9 @@ public struct NowPlayingView: View {
                 engine.skipNext()
             } label: {
                 Image(systemName: "forward.end.fill")
-                    .font(.system(size: 20))
+                    .font(.system(size: 24))
                     .foregroundStyle(pal.ink)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 48, height: 48)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Next track")
@@ -875,19 +1086,43 @@ public struct NowPlayingView: View {
             Spacer()
 
             Button {
-                if let cur { engine.toggleLike(cur) }
+                engine.nowPlayingStage = (engine.nowPlayingStage == .song ? .map : .song)
             } label: {
-                Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    .font(.system(size: 17))
-                    .foregroundStyle(isLiked ? pal.signal : pal.ink2)
+                Image(systemName: engine.nowPlayingStage == .map ? "square.stack.fill" : "circle.hexagongrid")
+                    .font(.system(size: 18))
+                    .foregroundStyle(engine.nowPlayingStage == .map ? pal.signal : pal.ink2)
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isLiked ? "Unlike" : "Like")
+            .accessibilityLabel("Toggle map stage")
         }
     }
 
-    private func detailPanel(cornerAll: Bool) -> some View {
+    private var collapsedDrawerDock: some View {
+        HStack(spacing: 0) {
+            ForEach([NowPlayingTab.upNext, .why, .trust]) { tab in
+                Button {
+                    engine.nowPlayingTab = tab
+                    engine.showNowPlayingDrawer = true
+                } label: {
+                    Text(tab.rawValue)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(pal.ink2)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(height: 44)
+        .background(pal.panel)
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous))
+        .overlay(alignment: .top) {
+            Rectangle().fill(pal.line).frame(height: 0.75)
+        }
+    }
+
+    private var drawerPanelContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 18) {
                 ForEach(NowPlayingTab.allCases) { tab in
@@ -897,7 +1132,7 @@ public struct NowPlayingView: View {
                     } label: {
                         VStack(spacing: 6) {
                             Text(tab.rawValue)
-                                .font(.system(size: 12.5, weight: active ? .semibold : .regular, design: .monospaced))
+                                .font(.system(size: 13, weight: active ? .semibold : .regular))
                                 .foregroundStyle(active ? pal.ink : pal.ink3)
                             Rectangle()
                                 .fill(active ? pal.ink : Color.clear)
@@ -915,10 +1150,10 @@ public struct NowPlayingView: View {
 
             Group {
                 switch engine.nowPlayingTab {
-                case .why:
-                    whyThisView
                 case .upNext:
                     upNextView
+                case .why:
+                    whyThisView
                 case .map:
                     mapTabView
                 case .trust:
@@ -927,16 +1162,93 @@ public struct NowPlayingView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(pal.panel)
-        .clipShape(
-            cornerAll
-                ? AnyShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                : AnyShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous))
-        )
-        .overlay {
-            if cornerAll {
-                RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
+    }
+
+    private var upNextView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(engine.playableQueue) { entry in
+                    let isCur = engine.currentWork?.workId == entry.work.workId
+                    Button {
+                        engine.play(entry.work, autoStart: true)
+                    } label: {
+                        HStack(spacing: 12) {
+                            RadioCoverArt(
+                                seed: entry.work.workId,
+                                colorOverride: entry.work.colorHex,
+                                artURL: entry.work.artUrl.flatMap(URL.init(string:)),
+                                localArtData: entry.work.localArtData,
+                                energy: entry.work.energy ?? 0.35,
+                                size: 44,
+                                isActive: isCur
+                            )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.work.title)
+                                    .font(.system(size: 14.5, weight: isCur ? .semibold : .medium))
+                                    .foregroundStyle(isCur ? pal.signal : pal.ink)
+                                    .lineLimit(1)
+                                Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.year)")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(pal.ink2)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 6)
+                            Text(String(format: "%.2f", entry.score))
+                                .font(.system(size: 11.5, design: .monospaced).monospacedDigit())
+                                .foregroundStyle(pal.ink3)
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
+                        .background(isCur ? pal.signal.opacity(0.08) : Color.clear)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Rectangle().fill(pal.line).frame(height: 0.5).padding(.horizontal, 16)
+                }
+
+                if !engine.discoveryWorks.isEmpty {
+                    HStack {
+                        Text("Manifold reference pool")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(pal.ink2)
+                        Spacer()
+                        Text("Coords only")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(pal.ink3)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+
+                    ForEach(engine.discoveryWorks) { entry in
+                        HStack(spacing: 12) {
+                            RadioCoverArt(
+                                seed: entry.work.workId,
+                                energy: entry.work.energy ?? 0.35,
+                                size: 38
+                            )
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(entry.work.title)
+                                    .font(.system(size: 13.5))
+                                    .foregroundStyle(pal.ink2)
+                                    .lineLimit(1)
+                                Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.year)")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(pal.ink3)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 6)
+                            Text(String(format: "%.2f", entry.score))
+                                .font(.system(size: 11, design: .monospaced).monospacedDigit())
+                                .foregroundStyle(pal.ink3)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 16)
+                        Rectangle().fill(pal.line).frame(height: 0.5).padding(.horizontal, 16)
+                    }
+                }
             }
+            .padding(.vertical, 8)
         }
     }
 
@@ -949,11 +1261,7 @@ public struct NowPlayingView: View {
                         factRow("Axis", value: cur.kind)
                         factRow(
                             "Energy / Wt",
-                            value: String(
-                                format: "%.2f / %.2f",
-                                cur.energy ?? 0.35,
-                                cur.heaviness ?? 0.30
-                            )
+                            value: String(format: "%.2f / %.2f", cur.energy ?? 0.35, cur.heaviness ?? 0.30)
                         )
                         if let x = cur.x, let y = cur.y {
                             factRow("Map pos", value: String(format: "(%.2f, %.2f)", x, y))
@@ -972,7 +1280,7 @@ public struct NowPlayingView: View {
                         Rectangle().fill(pal.line).frame(height: 0.5)
 
                         Text("Nearest on Manifold")
-                            .font(.system(size: 14, weight: .bold, design: .serif))
+                            .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(pal.ink)
 
                         VStack(spacing: 0) {
@@ -981,22 +1289,21 @@ public struct NowPlayingView: View {
                                     engine.play(entry.work, autoStart: true)
                                 } label: {
                                     HStack(spacing: 10) {
-                                        RadioSleeve(
-                                            title: entry.work.title,
-                                            subtitle: "",
+                                        RadioCoverArt(
                                             seed: entry.work.workId,
                                             colorOverride: entry.work.colorHex,
                                             artURL: entry.work.artUrl.flatMap(URL.init(string:)),
-                                            size: 36,
-                                            compact: true
+                                            localArtData: entry.work.localArtData,
+                                            energy: entry.work.energy ?? 0.35,
+                                            size: 38
                                         )
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text(entry.work.title)
-                                                .font(.system(size: 13, weight: .medium))
+                                                .font(.system(size: 13.5, weight: .medium))
                                                 .foregroundStyle(pal.ink)
                                                 .lineLimit(1)
                                             Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.originBadge)")
-                                                .font(.system(size: 11, design: .monospaced))
+                                                .font(.system(size: 11.5))
                                                 .foregroundStyle(pal.ink3)
                                                 .lineLimit(1)
                                         }
@@ -1019,110 +1326,6 @@ public struct NowPlayingView: View {
         }
     }
 
-    private func factRow(_ key: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(key)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(pal.ink3)
-                .frame(width: 94, alignment: .leading)
-            Text(value)
-                .font(.system(size: 12.5, design: .monospaced))
-                .foregroundStyle(pal.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var upNextView: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(engine.playableQueue) { entry in
-                    let isCur = engine.currentWork?.workId == entry.work.workId
-                    Button {
-                        engine.play(entry.work, autoStart: true)
-                    } label: {
-                        HStack(spacing: 10) {
-                            RadioSleeve(
-                                title: entry.work.title,
-                                subtitle: "",
-                                seed: entry.work.workId,
-                                colorOverride: entry.work.colorHex,
-                                artURL: entry.work.artUrl.flatMap(URL.init(string:)),
-                                size: 42,
-                                compact: true,
-                                isActive: isCur
-                            )
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.work.title)
-                                    .font(.system(size: 13.5, weight: isCur ? .semibold : .medium))
-                                    .foregroundStyle(isCur ? pal.signal : pal.ink)
-                                    .lineLimit(1)
-                                Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.year)")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(pal.ink3)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 6)
-                            Text(String(format: "%.2f", entry.score))
-                                .font(.system(size: 11.5, design: .monospaced).monospacedDigit())
-                                .foregroundStyle(pal.ink2)
-                        }
-                        .padding(.vertical, 7)
-                        .padding(.horizontal, 16)
-                        .background(isCur ? pal.signal.opacity(0.08) : Color.clear)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Rectangle().fill(pal.line).frame(height: 0.5).padding(.horizontal, 16)
-                }
-
-                if !engine.discoveryWorks.isEmpty {
-                    HStack {
-                        Text("Manifold reference pool")
-                            .font(.system(size: 13.5, weight: .bold, design: .serif))
-                            .foregroundStyle(pal.ink2)
-                        Spacer()
-                        Text("Coords only")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(pal.ink3)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 6)
-
-                    ForEach(engine.discoveryWorks) { entry in
-                        HStack(spacing: 10) {
-                            RadioSleeve(
-                                title: entry.work.title,
-                                subtitle: "",
-                                seed: entry.work.workId,
-                                size: 36,
-                                compact: true
-                            )
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(entry.work.title)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(pal.ink2)
-                                    .lineLimit(1)
-                                Text("\(shortCreatorName(entry.work.creator)) · \(entry.work.year)")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(pal.ink3)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 6)
-                            Text(String(format: "%.2f", entry.score))
-                                .font(.system(size: 11, design: .monospaced).monospacedDigit())
-                                .foregroundStyle(pal.ink3)
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 16)
-                        Rectangle().fill(pal.line).frame(height: 0.5).padding(.horizontal, 16)
-                    }
-                }
-            }
-            .padding(.vertical, 6)
-        }
-    }
-
     private var mapTabView: some View {
         VStack(spacing: 8) {
             LatentMapCanvas(
@@ -1134,6 +1337,7 @@ public struct NowPlayingView: View {
             ) { x, y in
                 engine.tuneToMap(x: x, y: y)
             }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .padding(.horizontal, 14)
             .padding(.top, 10)
 
@@ -1147,13 +1351,9 @@ public struct NowPlayingView: View {
                     Button("Reset map") {
                         engine.clearMapTarget()
                     }
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(pal.signal)
                     .buttonStyle(.plain)
-                } else {
-                    Text("Tap to steer")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(pal.ink3)
                 }
             }
             .padding(.horizontal, 16)
@@ -1165,7 +1365,7 @@ public struct NowPlayingView: View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.system(size: 11))
                 .foregroundStyle(pal.ink2)
         }
     }
@@ -1177,7 +1377,7 @@ public struct NowPlayingView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(lens.name)
-                                .font(.system(size: 15, weight: .bold, design: .serif))
+                                .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(pal.ink)
                             Spacer()
                             Label(
@@ -1191,7 +1391,7 @@ public struct NowPlayingView: View {
                         factRow("Space", value: lens.modelId)
                         factRow("Anchors", value: "\(lens.anchors.count) works")
                         Text(lens.summary)
-                            .font(.system(size: 12.5, design: .serif))
+                            .font(.system(size: 13))
                             .foregroundStyle(pal.ink2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1199,12 +1399,12 @@ public struct NowPlayingView: View {
                 }
 
                 Text("Canary reputation ledger")
-                    .font(.system(size: 14, weight: .bold, design: .serif))
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(pal.ink)
 
                 if engine.contributors.isEmpty {
                     Text("Syncing contributor trust scores from Manifold hub.")
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 12))
                         .foregroundStyle(pal.ink3)
                 } else {
                     ForEach(engine.contributors) { actor in
@@ -1218,7 +1418,7 @@ public struct NowPlayingView: View {
                                     .font(.system(size: 13, weight: .medium, design: .monospaced))
                                     .foregroundStyle(pal.ink)
                                 Text(actor.tier)
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .font(.system(size: 11))
                                     .foregroundStyle(pal.ink3)
                             }
                             Spacer(minLength: 6)
@@ -1239,15 +1439,28 @@ public struct NowPlayingView: View {
         }
     }
 
-    private var currentScore: Double? {
-        guard let cur else { return nil }
-        return engine.rankedQueue.first(where: { $0.work.workId == cur.workId })?.score
+    private func factRow(_ key: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(key)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(pal.ink3)
+                .frame(width: 94, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12.5, design: .monospaced))
+                .foregroundStyle(pal.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func formatTime(_ sec: Double) -> String {
         let total = max(0, Int(sec.rounded()))
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+}
+
+private func shortCreatorName(_ raw: String) -> String {
+    let head = raw.split(separator: "·", maxSplits: 1).first.map(String.init) ?? raw
+    return head.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 struct RadioSettingsSheet: View {

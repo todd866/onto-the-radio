@@ -24,6 +24,7 @@ public struct RadioPalette: Sendable {
     public var bgRGB: RadioRGB
     public var bg: Color
     public var panel: Color
+    public var panelElevated: Color
     public var ink: Color
     public var ink2: Color
     public var ink3: Color
@@ -37,6 +38,7 @@ public struct RadioPalette: Sendable {
         bgRGB: RadioRGB(r: 0.949, g: 0.929, b: 0.890),          // #F2EDE3
         bg: Color(red: 0.949, green: 0.929, blue: 0.890),
         panel: Color(red: 0.914, green: 0.890, blue: 0.839),     // #E9E3D6
+        panelElevated: Color(red: 0.878, green: 0.851, blue: 0.796),
         ink: Color(red: 0.090, green: 0.078, blue: 0.059),       // #17140F
         ink2: Color(red: 0.353, green: 0.322, blue: 0.278),      // #5A5247
         ink3: Color(red: 0.541, green: 0.506, blue: 0.455),      // #8A8174
@@ -51,6 +53,7 @@ public struct RadioPalette: Sendable {
         bgRGB: RadioRGB(r: 0.063, g: 0.059, b: 0.051),          // #100F0D
         bg: Color(red: 0.063, green: 0.059, blue: 0.051),
         panel: Color(red: 0.102, green: 0.094, blue: 0.082),     // #1A1815
+        panelElevated: Color(red: 0.145, green: 0.133, blue: 0.118),
         ink: Color(red: 0.937, green: 0.910, blue: 0.855),       // #EFE8DA
         ink2: Color(red: 0.702, green: 0.667, blue: 0.604),      // #B3AA9A
         ink3: Color(red: 0.490, green: 0.459, blue: 0.408),      // #7D7568
@@ -66,42 +69,95 @@ public struct RadioPalette: Sendable {
     }
 
     public func tintedCanvas(rgb: RadioRGB, scheme: ColorScheme) -> Color {
-        rgb.blended(into: bgRGB, amount: scheme == .dark ? 0.16 : 0.10)
+        rgb.blended(into: bgRGB, amount: scheme == .dark ? 0.20 : 0.11)
     }
 }
 
+public struct SleeveColorPair: Equatable, Sendable {
+    public var ground: RadioRGB
+    public var accent: RadioRGB
+    public var highlight: RadioRGB
+}
+
 public enum RadioSwatches {
-    private static let archivalSwatches: [RadioRGB] = [
-        RadioRGB(r: 0.463, g: 0.341, b: 0.204), // ochre brown
-        RadioRGB(r: 0.259, g: 0.275, b: 0.310), // slate ink
-        RadioRGB(r: 0.333, g: 0.314, b: 0.251), // warm olive
-        RadioRGB(r: 0.592, g: 0.231, b: 0.208), // oxide red
-        RadioRGB(r: 0.369, g: 0.298, b: 0.278), // umber plum
-        RadioRGB(r: 0.220, g: 0.345, b: 0.322), // deep moss teal
-        RadioRGB(r: 0.282, g: 0.318, b: 0.388), // cobalt slate
-        RadioRGB(r: 0.545, g: 0.376, b: 0.169), // amber rust
+    private static let editorialTriads: [SleeveColorPair] = [
+        // 0: Ochre gold / espresso ink / warm linen
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.580, g: 0.408, b: 0.165),
+            accent: RadioRGB(r: 0.145, g: 0.125, b: 0.106),
+            highlight: RadioRGB(r: 0.937, g: 0.898, b: 0.824)
+        ),
+        // 1: Deep slate navy / dusty sand / vermilion
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.145, g: 0.188, b: 0.267),
+            accent: RadioRGB(r: 0.835, g: 0.776, b: 0.678),
+            highlight: RadioRGB(r: 0.769, g: 0.286, b: 0.169)
+        ),
+        // 2: Terracotta clay / matte charcoal / warm bone
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.694, g: 0.275, b: 0.165),
+            accent: RadioRGB(r: 0.122, g: 0.110, b: 0.098),
+            highlight: RadioRGB(r: 0.945, g: 0.910, b: 0.847)
+        ),
+        // 3: Deep moss / olive sage / sunlit brass
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.169, g: 0.282, b: 0.247),
+            accent: RadioRGB(r: 0.467, g: 0.569, b: 0.486),
+            highlight: RadioRGB(r: 0.886, g: 0.706, b: 0.349)
+        ),
+        // 4: Espresso umber / burnt amber / pale cream
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.255, g: 0.192, b: 0.165),
+            accent: RadioRGB(r: 0.796, g: 0.459, b: 0.200),
+            highlight: RadioRGB(r: 0.933, g: 0.894, b: 0.831)
+        ),
+        // 5: Oxide burgundy / blush sandstone / obsidian
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.486, g: 0.184, b: 0.204),
+            accent: RadioRGB(r: 0.859, g: 0.722, b: 0.659),
+            highlight: RadioRGB(r: 0.118, g: 0.098, b: 0.094)
+        ),
+        // 6: Cobalt ink / mineral cyan / parchment
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.173, g: 0.278, b: 0.388),
+            accent: RadioRGB(r: 0.396, g: 0.620, b: 0.678),
+            highlight: RadioRGB(r: 0.945, g: 0.922, b: 0.875)
+        ),
+        // 7: Matte walnut / soft terracotta / parchment
+        SleeveColorPair(
+            ground: RadioRGB(r: 0.333, g: 0.294, b: 0.239),
+            accent: RadioRGB(r: 0.745, g: 0.380, b: 0.255),
+            highlight: RadioRGB(r: 0.925, g: 0.886, b: 0.808)
+        ),
     ]
 
-    public static func sleeveRGB(for seed: String, colorOverride: String? = nil) -> RadioRGB {
-        if let parsed = parseColorRGB(colorOverride) {
-            return parsed
-        }
-        switch seed {
-        case "lens:radio:late-wire":
-            return RadioRGB(r: 0.145, g: 0.188, b: 0.259) // #253042 deep slate-indigo
-        case "lens:radio:motorik-pulse":
-            return RadioRGB(r: 0.725, g: 0.216, b: 0.137) // #B93723 vermilion
-        case "lens:radio:chamber-focus":
-            return RadioRGB(r: 0.604, g: 0.420, b: 0.141) // #9A6B24 archival ochre
-        default:
-            break
-        }
+    public static func hashSeed(_ seed: String) -> UInt64 {
         var hash: UInt64 = 14695981039346656037
         for b in seed.utf8 {
             hash ^= UInt64(b)
             hash = hash &* 1099511628211
         }
-        return archivalSwatches[Int(hash % UInt64(archivalSwatches.count))]
+        return hash
+    }
+
+    public static func sleeveTriad(for seed: String, colorOverride: String? = nil) -> SleeveColorPair {
+        let baseIdx: Int
+        switch seed {
+        case "lens:radio:late-wire": baseIdx = 1
+        case "lens:radio:motorik-pulse": baseIdx = 2
+        case "lens:radio:chamber-focus": baseIdx = 0
+        default:
+            baseIdx = Int(hashSeed(seed) % UInt64(editorialTriads.count))
+        }
+        var triad = editorialTriads[baseIdx]
+        if let parsed = parseColorRGB(colorOverride) {
+            triad.ground = parsed
+        }
+        return triad
+    }
+
+    public static func sleeveRGB(for seed: String, colorOverride: String? = nil) -> RadioRGB {
+        sleeveTriad(for: seed, colorOverride: colorOverride).ground
     }
 
     public static func parseColorRGB(_ raw: String?) -> RadioRGB? {
@@ -154,104 +210,196 @@ public enum RadioSwatches {
     }
 }
 
-public struct RadioSleeve: View {
-    public var title: String
-    public var subtitle: String
+/// Pure-visual modernist album or station cover. Tracks display zero text inside artwork;
+/// stations optionally carry a single bottom-left wordmark.
+public struct RadioCoverArt: View {
     public var seed: String
     public var colorOverride: String?
     public var artURL: URL?
+    public var localArtData: Data?
+    public var stationTitle: String?
+    public var energy: Double
     public var size: CGFloat
-    public var compact: Bool
-    public var badge: String?
+    public var cornerRadius: CGFloat
     public var isActive: Bool
 
     @Environment(\.colorScheme) private var scheme
 
     public init(
-        title: String,
-        subtitle: String,
         seed: String,
         colorOverride: String? = nil,
         artURL: URL? = nil,
+        localArtData: Data? = nil,
+        stationTitle: String? = nil,
+        energy: Double = 0.35,
         size: CGFloat,
-        compact: Bool = false,
-        badge: String? = nil,
+        cornerRadius: CGFloat? = nil,
         isActive: Bool = false
     ) {
-        self.title = title
-        self.subtitle = subtitle
         self.seed = seed
         self.colorOverride = colorOverride
         self.artURL = artURL
+        self.localArtData = localArtData
+        self.stationTitle = stationTitle
+        self.energy = energy
         self.size = size
-        self.compact = compact
-        self.badge = badge
+        self.cornerRadius = cornerRadius ?? (size <= 56 ? 6 : 10)
         self.isActive = isActive
     }
 
     public var body: some View {
         let pal = RadioPalette.forScheme(scheme)
-        let rgb = RadioSwatches.sleeveRGB(for: seed, colorOverride: colorOverride)
-        let corner: CGFloat = compact ? 5 : 8
+        let triad = RadioSwatches.sleeveTriad(for: seed, colorOverride: colorOverride)
+        let h = RadioSwatches.hashSeed(seed)
+        let motif = Int((h >> 8) % 4)
+        let flip = ((h >> 16) & 1) == 1
 
         ZStack(alignment: .bottomLeading) {
-            rgb.color
+            triad.ground.color
 
-            if !compact {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        if let badge, !badge.isEmpty {
-                            Text(badge)
-                                .font(.system(size: max(9, size * 0.068), weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.94, green: 0.91, blue: 0.85))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.black.opacity(0.32), in: RoundedRectangle(cornerRadius: 4))
+            GeometryReader { geo in
+                let w = geo.size.width
+                let hgt = geo.size.height
+
+                switch motif {
+                case 0:
+                    // Concentric Vinyl Disc
+                    let outerD = w * 1.04
+                    let cx = flip ? w * 0.62 : w * 0.38
+                    let cy = flip ? hgt * 0.42 : hgt * 0.56
+                    ZStack {
+                        Circle()
+                            .fill(triad.accent.color.opacity(0.92))
+                            .frame(width: outerD, height: outerD)
+                        ForEach([0.76, 0.56, 0.38], id: \.self) { step in
+                            Circle()
+                                .strokeBorder(triad.highlight.color.opacity(0.28), lineWidth: max(0.75, w * 0.008))
+                                .frame(width: outerD * step, height: outerD * step)
                         }
-                        Spacer(minLength: 0)
+                        Circle()
+                            .fill(triad.highlight.color)
+                            .frame(width: outerD * 0.24, height: outerD * 0.24)
+                        Circle()
+                            .fill(triad.ground.color)
+                            .frame(width: outerD * 0.07, height: outerD * 0.07)
+                    }
+                    .position(x: cx, y: cy)
+
+                case 1:
+                    // Bauhaus Architectural Split
+                    let blockW = w * 0.44
+                    let blockX = flip ? w - blockW * 0.5 : blockW * 0.5
+                    let circD = w * 0.68
+                    let cx = flip ? w * 0.42 : w * 0.58
+                    let cy = hgt * 0.44
+                    ZStack {
+                        Rectangle()
+                            .fill(triad.accent.color.opacity(0.90))
+                            .frame(width: blockW, height: hgt)
+                            .position(x: blockX, y: hgt * 0.5)
+                        Circle()
+                            .fill(triad.highlight.color.opacity(0.95))
+                            .frame(width: circD, height: circD)
+                            .position(x: cx, y: cy)
+                        Rectangle()
+                            .fill(triad.ground.color.opacity(0.88))
+                            .frame(width: w, height: max(3, hgt * 0.05))
+                            .position(x: w * 0.5, y: hgt * 0.74)
                     }
 
-                    Spacer(minLength: 0)
+                case 2:
+                    // Harmonic Strata
+                    let bands = 5
+                    let bandH = hgt * 0.075
+                    let gap = hgt * 0.045
+                    let totalH = CGFloat(bands) * bandH + CGFloat(bands - 1) * gap
+                    let startY = (hgt - totalH) * 0.58
+                    let dotD = w * 0.20
+                    let dx = flip ? w * 0.22 : w * 0.78
+                    ZStack(alignment: .topLeading) {
+                        Circle()
+                            .fill(triad.highlight.color)
+                            .frame(width: dotD, height: dotD)
+                            .position(x: dx, y: hgt * 0.20)
+                        ForEach(0..<bands, id: \.self) { i in
+                            let frac = 0.42 + 0.46 * ((Double((h >> (i * 5)) & 0xff) / 255.0) * 0.6 + energy * 0.4)
+                            let bw = w * min(0.88, frac)
+                            let bx = flip ? (w - bw - w * 0.10) : w * 0.10
+                            let by = startY + CGFloat(i) * (bandH + gap)
+                            RoundedRectangle(cornerRadius: bandH * 0.3, style: .continuous)
+                                .fill(i == bands - 1 ? triad.highlight.color : triad.accent.color.opacity(0.88))
+                                .frame(width: bw, height: bandH)
+                                .position(x: bx + bw * 0.5, y: by + bandH * 0.5)
+                        }
+                    }
 
-                    Text(title)
-                        .font(.system(size: max(13, min(30, size * 0.14)), weight: .bold, design: .serif))
-                        .foregroundStyle(Color(red: 0.980, green: 0.965, blue: 0.933))
-                        .lineSpacing(-2)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.68)
-                        .multilineTextAlignment(.leading)
-
-                    Spacer(minLength: 0)
-
-                    if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: max(9.5, min(12, size * 0.074)), weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color(red: 0.96, green: 0.94, blue: 0.89).opacity(0.84))
-                            .lineLimit(1)
+                default:
+                    // Orbital Field
+                    let d1 = w * 0.72
+                    let d2 = w * 0.56
+                    let c1x = flip ? w * 0.42 : w * 0.58
+                    let c1y = hgt * 0.40
+                    let c2x = flip ? w * 0.62 : w * 0.36
+                    let c2y = hgt * 0.60
+                    let ringD = w * 0.88
+                    ZStack {
+                        Circle()
+                            .fill(triad.accent.color.opacity(0.88))
+                            .frame(width: d1, height: d1)
+                            .position(x: c1x, y: c1y)
+                        Circle()
+                            .fill(triad.highlight.color.opacity(0.90))
+                            .frame(width: d2, height: d2)
+                            .position(x: c2x, y: c2y)
+                        Circle()
+                            .strokeBorder(triad.highlight.color.opacity(0.42), lineWidth: max(0.8, w * 0.01))
+                            .frame(width: ringD, height: ringD)
+                            .position(x: w * 0.5, y: hgt * 0.5)
                     }
                 }
-                .padding(max(8, size * 0.08))
             }
 
-            if let artURL {
+            if let data = localArtData, let localImg = decodeLocalImage(data) {
+                localImg
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipped()
+            } else if let artURL {
                 CookieArtworkImage(url: artURL)
                     .frame(width: size, height: size)
                     .clipped()
             }
 
-            if isActive {
-                Rectangle()
-                    .fill(pal.signal)
-                    .frame(height: compact ? 2 : 3)
+            if let stationTitle, !stationTitle.isEmpty, size >= 90 {
+                Text(stationTitle)
+                    .font(.system(size: min(17, max(13, size * 0.11)), weight: .bold, design: .serif))
+                    .foregroundStyle(Color(red: 0.980, green: 0.965, blue: 0.933))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(red: 0.07, green: 0.06, blue: 0.05).opacity(0.72))
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(isActive ? pal.signal : Color.black.opacity(0.08), lineWidth: isActive ? 1.5 : 0.5)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(isActive ? pal.signal : Color.black.opacity(0.10), lineWidth: isActive ? 2.0 : 0.6)
         }
         .accessibilityHidden(true)
+    }
+
+    private func decodeLocalImage(_ data: Data) -> Image? {
+        #if os(macOS)
+        guard let ns = NSImage(data: data) else { return nil }
+        return Image(nsImage: ns)
+        #else
+        guard let ui = UIImage(data: data) else { return nil }
+        return Image(uiImage: ui)
+        #endif
     }
 }
 
@@ -341,7 +489,7 @@ public struct LatentMapCanvas: View {
         GeometryReader { geo in
             let w = max(1, geo.size.width)
             let h = max(1, geo.size.height)
-            let pad: CGFloat = 16
+            let pad: CGFloat = 18
 
             Canvas { ctx, size in
                 let mapW = max(1, size.width - pad * 2)
@@ -352,7 +500,6 @@ public struct LatentMapCanvas: View {
                     return CGPoint(x: pad + nx * mapW, y: pad + ny * mapH)
                 }
 
-                // Subtle crosshair axes
                 var axes = Path()
                 axes.move(to: CGPoint(x: pad, y: size.height / 2))
                 axes.addLine(to: CGPoint(x: size.width - pad, y: size.height / 2))
@@ -360,7 +507,6 @@ public struct LatentMapCanvas: View {
                 axes.addLine(to: CGPoint(x: size.width / 2, y: size.height - pad))
                 ctx.stroke(axes, with: .color(pal.line.opacity(0.65)), lineWidth: 0.6)
 
-                // Region labels placed away from dense track clusters
                 let labels: [(String, Double, Double)] = [
                     ("Chamber", -0.78, 0.78),
                     ("Ambient", -0.20, 0.44),
@@ -372,7 +518,7 @@ public struct LatentMapCanvas: View {
                     let p = pt(lx, ly)
                     ctx.draw(
                         Text(text)
-                            .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
                             .foregroundStyle(pal.ink3),
                         at: p
                     )
@@ -381,27 +527,24 @@ public struct LatentMapCanvas: View {
                 let plotted = works.filter { $0.x != nil && $0.y != nil }
                 let anchorIDs = Set(activeLens?.anchors.map(\.workId) ?? [])
 
-                // All coordinate points
                 for item in plotted {
                     guard let ix = item.x, let iy = item.y else { continue }
                     let c = pt(ix, iy)
                     let regIdx = quadrantColorIndex(for: item)
                     let col = Self.regionColors[regIdx]
-                    let r: CGFloat = item.isPlayable ? 4.2 : 2.8
+                    let r: CGFloat = item.isPlayable ? 4.5 : 3.0
                     let rect = CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
-                    if item.isPlayable {
-                        ctx.fill(Path(ellipseIn: rect), with: .color(col))
-                    } else {
-                        ctx.fill(Path(ellipseIn: rect), with: .color(col.opacity(0.45)))
-                    }
+                    ctx.fill(Path(ellipseIn: rect), with: .color(item.isPlayable ? col : col.opacity(0.45)))
                     if anchorIDs.contains(item.workId) {
-                        let ar: CGFloat = 6.5
-                        let arect = CGRect(x: c.x - ar, y: c.y - ar, width: ar * 2, height: ar * 2)
-                        ctx.stroke(Path(ellipseIn: arect), with: .color(pal.ink2.opacity(0.7)), lineWidth: 1.0)
+                        let ar: CGFloat = 7.0
+                        ctx.stroke(
+                            Path(ellipseIn: CGRect(x: c.x - ar, y: c.y - ar, width: ar * 2, height: ar * 2)),
+                            with: .color(pal.ink2.opacity(0.65)),
+                            lineWidth: 1.0
+                        )
                     }
                 }
 
-                // Ranked trail
                 let trailPoints = trail.compactMap { t -> CGPoint? in
                     guard let tx = t.x, let ty = t.y else { return nil }
                     return pt(tx, ty)
@@ -415,10 +558,10 @@ public struct LatentMapCanvas: View {
                     ctx.stroke(
                         line,
                         with: .color(pal.ink.opacity(0.75)),
-                        style: StrokeStyle(lineWidth: 1.2, dash: [3, 3])
+                        style: StrokeStyle(lineWidth: 1.25, dash: [3, 3])
                     )
                     for p in trailPoints {
-                        let r: CGFloat = 2.8
+                        let r: CGFloat = 3.0
                         ctx.fill(
                             Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
                             with: .color(pal.ink)
@@ -426,10 +569,9 @@ public struct LatentMapCanvas: View {
                     }
                 }
 
-                // Pinned target reticle if user tapped map
                 if let target = mapTarget {
                     let tp = pt(target.x, target.y)
-                    let tr: CGFloat = 9
+                    let tr: CGFloat = 9.5
                     ctx.stroke(
                         Path(ellipseIn: CGRect(x: tp.x - tr, y: tp.y - tr, width: tr * 2, height: tr * 2)),
                         with: .color(pal.ink2),
@@ -437,19 +579,17 @@ public struct LatentMapCanvas: View {
                     )
                 }
 
-                // Current work reticle
                 if let cur = currentWork, let cx = cur.x, let cy = cur.y {
                     let p = pt(cx, cy)
-                    let r: CGFloat = 8.5
+                    let r: CGFloat = 9.0
                     ctx.stroke(
                         Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
                         with: .color(pal.signal),
-                        lineWidth: 2.2
+                        lineWidth: 2.4
                     )
                 }
             }
             .background(pal.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             #if !os(tvOS)
             .contentShape(Rectangle())
             .gesture(
