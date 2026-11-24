@@ -235,4 +235,193 @@ final class OntoTheRadioTests: XCTestCase {
         try png.write(to: URL(fileURLWithPath: path))
         XCTAssertGreaterThan(png.count, 10_000)
     }
+
+    func testGlancebarNowStateDecodingPlayingPausedStopped() throws {
+        let playingJSON = """
+        {"state":"playing","title":"So What","artist":"Miles Davis","liked":true,"host":"studio-mac","epoch":1732400000.5}
+        """.data(using: .utf8)!
+        let playing = try JSONDecoder().decode(GlancebarNowState.self, from: playingJSON)
+        XCTAssertEqual(playing.state, "playing")
+        XCTAssertEqual(playing.title, "So What")
+        XCTAssertEqual(playing.artist, "Miles Davis")
+        XCTAssertEqual(playing.liked, true)
+        XCTAssertEqual(playing.host, "studio-mac")
+        XCTAssertEqual(playing.epoch, 1732400000.5)
+
+        let pausedJSON = """
+        {"state":"paused","title":"Gymnopédie No. 1","artist":"Erik Satie","liked":false,"host":"studio-mac","epoch":1732400010}
+        """.data(using: .utf8)!
+        let paused = try JSONDecoder().decode(GlancebarNowState.self, from: pausedJSON)
+        XCTAssertEqual(paused.state, "paused")
+        XCTAssertEqual(paused.title, "Gymnopédie No. 1")
+        XCTAssertEqual(paused.artist, "Erik Satie")
+        XCTAssertEqual(paused.liked, false)
+        XCTAssertEqual(paused.epoch, 1732400010.0)
+
+        let stoppedJSON = """
+        {"state":"stopped"}
+        """.data(using: .utf8)!
+        let stopped = try JSONDecoder().decode(GlancebarNowState.self, from: stoppedJSON)
+        XCTAssertEqual(stopped.state, "stopped")
+        XCTAssertNil(stopped.title)
+        XCTAssertNil(stopped.artist)
+        XCTAssertNil(stopped.liked)
+        XCTAssertNil(stopped.host)
+        XCTAssertNil(stopped.epoch)
+    }
+
+    func testHomeRadioClientGlancebarFetchAndCommandAndErrors() async throws {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [MockGlancebarURLProtocol.self]
+        let session = URLSession(configuration: cfg)
+
+        MockGlancebarURLProtocol.handler = { req in
+            let url = try XCTUnwrap(req.url)
+            if url.path == "/api/glancebar/now" {
+                let body = #"{"state":"playing","title":"Blue in Green","artist":"Miles Davis","liked":false,"host":"studio-mac","epoch":1234}"#
+                    .data(using: .utf8)!
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            if url.path == "/api/glancebar/cmd" {
+                let body = #"{"ok":true,"now":{"state":"paused","title":"Blue in Green","artist":"Miles Davis","liked":true,"host":"studio-mac","epoch":1235}}"#
+                    .data(using: .utf8)!
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            return (HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!, Data())
+        }
+
+        let now = try await HomeRadioClient.fetchGlancebarNow(baseURL: "https://mock.example.com", session: session)
+        XCTAssertEqual(now.state, "playing")
+        XCTAssertEqual(now.title, "Blue in Green")
+        XCTAssertEqual(now.liked, false)
+
+        let updated = try await HomeRadioClient.sendGlancebarCommand(baseURL: "https://mock.example.com", cmd: "like", session: session)
+        XCTAssertEqual(updated?.state, "paused")
+        XCTAssertEqual(updated?.liked, true)
+
+        MockGlancebarURLProtocol.handler = { req in
+            let url = try XCTUnwrap(req.url)
+            return (HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        do {
+            _ = try await HomeRadioClient.fetchGlancebarNow(baseURL: "https://mock.example.com", session: session)
+            XCTFail("Expected unauthorized")
+        } catch let err as HomeRadioError {
+            if case .unauthorized = err {} else { XCTFail("Expected .unauthorized, got \(err)") }
+        }
+
+        MockGlancebarURLProtocol.handler = { req in
+            let url = try XCTUnwrap(req.url)
+            return (HTTPURLResponse(url: url, statusCode: 503, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        do {
+            _ = try await HomeRadioClient.sendGlancebarCommand(baseURL: "https://mock.example.com", cmd: "toggle", session: session)
+            XCTFail("Expected serverError")
+        } catch let err as HomeRadioError {
+            if case .serverError(let code) = err {
+                XCTAssertEqual(code, 503)
+            } else {
+                XCTFail("Expected .serverError, got \(err)")
+            }
+        }
+    }
+
+    @MainActor
+    func testRadioEngineGlancebarControlPausesLocalPlayerAndResetsOnDisconnect() throws {
+        let suiteName = "com.iantodd.ontotheradio.glancebar.\(UUID().uuidString)"
+        let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
+        let engine = RadioEngine(defaults: suite)
+        let firstWork = try XCTUnwrap(engine.playableQueue.first?.work)
+        engine.play(firstWork, autoStart: true)
+        XCTAssertTrue(engine.isPlaying)
+
+        engine.homeServerURL = "https://mock.example.com"
+        engine.homeServerConnected = true
+        engine.homeServerStatus = "Connected · 1 tracks"
+        engine.glancebarAvailable = true
+        engine.glancebarNow = GlancebarNowState(
+            state: "playing",
+            title: "Goldberg Variations, BWV 988: Aria",
+            artist: "Johann Sebastian Bach",
+            liked: true,
+            host: "studio-mac",
+            epoch: 1732400000
+        )
+
+        engine.controlGlancebar = true
+        XCTAssertFalse(engine.isPlaying)
+        XCTAssertEqual(engine.player.rate, 0)
+        XCTAssertTrue(engine.isControllingGlancebar)
+
+        let fitted = AITitleFitter.heuristicFit(engine.glancebarRawTitle, maxChars: 20)
+        XCTAssertLessThanOrEqual(fitted.count, 20)
+        XCTAssertFalse(fitted.contains("..."))
+        XCTAssertFalse(fitted.contains("…"))
+
+        // Render Glancebar mode in Light & Dark cleanly
+        let size = CGSize(width: 390, height: 844)
+        for style: UIUserInterfaceStyle in [.light, .dark] {
+            let scheme: ColorScheme = style == .dark ? .dark : .light
+            let tag = style == .dark ? "dark" : "light"
+            try renderPNG(
+                view: RadioScreen(engine: engine).environment(\.colorScheme, scheme),
+                style: style,
+                size: size,
+                to: "/tmp/ontotheradio-glancebar-home-\(tag).png"
+            )
+            try renderPNG(
+                view: NowPlayingView(engine: engine).environment(\.colorScheme, scheme),
+                style: style,
+                size: size,
+                to: "/tmp/ontotheradio-glancebar-np-\(tag).png"
+            )
+        }
+
+        // Toggle off and back on via toggleGlancebarControl()
+        engine.toggleGlancebarControl()
+        XCTAssertFalse(engine.controlGlancebar)
+        engine.play(firstWork, autoStart: true)
+        XCTAssertTrue(engine.isPlaying)
+        engine.homeServerURL = "" // ensure toggle doesn't hit network
+        engine.toggleGlancebarControl()
+        XCTAssertTrue(engine.controlGlancebar)
+        XCTAssertFalse(engine.isPlaying)
+        XCTAssertEqual(engine.player.rate, 0)
+
+        // Disconnect resets all Glancebar and home-server state cleanly
+        engine.disconnectHomeServer()
+        XCTAssertFalse(engine.homeServerConnected)
+        XCTAssertFalse(engine.glancebarAvailable)
+        XCTAssertFalse(engine.controlGlancebar)
+        XCTAssertNil(engine.glancebarNow)
+        XCTAssertTrue(engine.homeWorks.isEmpty)
+        XCTAssertTrue(engine.homeStations.isEmpty)
+        XCTAssertEqual(engine.homeServerStatus, "Local + Manifold CC0")
+    }
+}
+
+private final class MockGlancebarURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (resp, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

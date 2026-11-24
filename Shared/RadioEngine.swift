@@ -67,6 +67,15 @@ public final class RadioEngine {
     public var nowPlayingTab: NowPlayingTab = .upNext
     public var homeServerConnected: Bool = false
     public var homeServerStatus: String = "Local + Manifold CC0"
+    public var glancebarAvailable: Bool = false
+    public var controlGlancebar: Bool = false {
+        didSet {
+            if controlGlancebar && !oldValue {
+                pauseLocalPlaybackForGlancebar()
+            }
+        }
+    }
+    public var glancebarNow: GlancebarNowState? = nil
     public var playbackNotice: String? = nil
     public var aiFittedTitles: [String: String] = [:]
     public var appleMusicCache: [String: AppleMusicLookupResult] = [:]
@@ -74,10 +83,11 @@ public final class RadioEngine {
     public let cloudPass = CloudPassStore()
 
     private let defaults: UserDefaults
-    private let player = AVPlayer()
+    let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     @ObservationIgnored private var itemStatusObs: NSKeyValueObservation?
+    @ObservationIgnored private var glancebarPollTask: Task<Void, Never>?
     @ObservationIgnored private var consecutiveFailures: Int = 0
     @ObservationIgnored private var inFlightFitKeys: Set<String> = []
     private let silentQA: Bool
@@ -395,6 +405,7 @@ public final class RadioEngine {
             try await loadHomeData(server: server)
         } catch {
             homeServerConnected = false
+            resetGlancebarState()
             if !silent {
                 homeServerStatus = error.localizedDescription
             }
@@ -408,6 +419,7 @@ public final class RadioEngine {
             try await loadHomeData(server: server)
         } catch {
             homeServerConnected = false
+            resetGlancebarState()
             if !silent {
                 homeServerStatus = error.localizedDescription
             }
@@ -423,9 +435,17 @@ public final class RadioEngine {
         if currentWork == nil, let first = playableQueue.first?.work {
             currentWork = first
         }
+        if let now = try? await HomeRadioClient.fetchGlancebarNow(baseURL: server) {
+            glancebarAvailable = true
+            glancebarNow = now
+            startGlancebarPoll()
+        } else {
+            resetGlancebarState()
+        }
     }
 
     public func disconnectHomeServer() {
+        resetGlancebarState()
         let server = RadioKeychain.normalizedServer(homeServerURL)
         if !server.isEmpty {
             RadioKeychain.deletePassword(server: server)
@@ -439,12 +459,110 @@ public final class RadioEngine {
         }
     }
 
+    public var isControllingGlancebar: Bool {
+        controlGlancebar && glancebarAvailable
+    }
+
+    public var glancebarRawTitle: String {
+        let t = glancebarNow?.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return t.isEmpty ? "Glancebar idle" : t
+    }
+
+    public var glancebarRawSubtitle: String {
+        let a = glancebarNow?.artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !a.isEmpty { return a }
+        let h = glancebarNow?.host?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return h.isEmpty ? "Mac" : h
+    }
+
+    public var glancebarIsPlaying: Bool {
+        glancebarNow?.state == "playing"
+    }
+
+    public var glancebarIsLiked: Bool {
+        glancebarNow?.liked == true
+    }
+
+    public var glancebarArtSeed: String {
+        "glancebar:\(glancebarRawTitle):\(glancebarRawSubtitle)"
+    }
+
+    public func toggleGlancebarControl() {
+        controlGlancebar.toggle()
+        if controlGlancebar {
+            pauseLocalPlaybackForGlancebar()
+            Task { await self.refreshGlancebarNow() }
+        }
+    }
+
+    public func refreshGlancebarNow() async {
+        let server = RadioKeychain.normalizedServer(homeServerURL)
+        guard !server.isEmpty else { return }
+        if let now = try? await HomeRadioClient.fetchGlancebarNow(baseURL: server) {
+            glancebarAvailable = true
+            glancebarNow = now
+        }
+    }
+
+    public func sendGlancebarCommand(_ cmd: String) async {
+        let server = RadioKeychain.normalizedServer(homeServerURL)
+        guard !server.isEmpty else { return }
+        do {
+            if let now = try await HomeRadioClient.sendGlancebarCommand(baseURL: server, cmd: cmd) {
+                glancebarAvailable = true
+                glancebarNow = now
+            } else {
+                await refreshGlancebarNow()
+            }
+        } catch {
+            setNotice("Mac remote failed: \(error.localizedDescription)")
+        }
+    }
+
+    public func toggleGlancebarLike() {
+        Task { await self.sendGlancebarCommand("like") }
+    }
+
+    public func dislikeGlancebarTrack() {
+        Task { await self.sendGlancebarCommand("dislike") }
+    }
+
+    private func pauseLocalPlaybackForGlancebar() {
+        player.pause()
+        isPlaying = false
+        updateNowPlayingInfo()
+    }
+
+    private func resetGlancebarState() {
+        glancebarPollTask?.cancel()
+        glancebarPollTask = nil
+        glancebarAvailable = false
+        controlGlancebar = false
+        glancebarNow = nil
+    }
+
+    private func startGlancebarPoll() {
+        glancebarPollTask?.cancel()
+        guard !silentQA, homeServerConnected else { return }
+        glancebarPollTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled, self.homeServerConnected, !self.silentQA {
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled, self.homeServerConnected, !self.silentQA else { break }
+                await self.refreshGlancebarNow()
+            }
+        }
+    }
+
     public func selectLens(_ lens: RadioLens) {
         selectedLensID = lens.id
         mapTarget = nil
         mapTargetLabel = nil
         if lens.id.hasPrefix("home-station:") {
             let stationKey = String(lens.id.dropFirst("home-station:".count))
+            if isControllingGlancebar {
+                Task { await self.sendGlancebarCommand("mood:\(stationKey)") }
+                return
+            }
             let server = homeServerURL
             Task {
                 if let picks = try? await HomeRadioClient.fetchStationQueue(baseURL: server, mood: "station:\(stationKey)"),
@@ -459,6 +577,9 @@ public final class RadioEngine {
             }
             return
         }
+        if isControllingGlancebar {
+            return
+        }
         if let top = playableQueue.first?.work {
             play(top, autoStart: isPlaying)
         }
@@ -469,6 +590,19 @@ public final class RadioEngine {
         moodPreset = resolved
         maxEnergy = resolved.maxEnergy
         maxHeaviness = resolved.maxHeaviness
+        if isControllingGlancebar {
+            let cmd: String
+            switch resolved {
+            case .chill, .late, .focus:
+                cmd = "mood:chill"
+            case .pulse, .high:
+                cmd = "mood:dance"
+            case .all:
+                cmd = "mood:any"
+            }
+            Task { await self.sendGlancebarCommand(cmd) }
+            return
+        }
         if let cur = currentWork, !playableQueue.contains(where: { $0.work.workId == cur.workId }),
            let top = playableQueue.first?.work {
             play(top, autoStart: isPlaying)
@@ -524,6 +658,9 @@ public final class RadioEngine {
             setNotice("Tap Apple Music or YouTube in Now Playing to listen")
             return
         }
+        if autoStart && controlGlancebar {
+            controlGlancebar = false
+        }
         currentWork = work
         queuedNextIDs.removeAll { $0 == work.workId }
         elapsedSec = 0
@@ -569,6 +706,10 @@ public final class RadioEngine {
     }
 
     public func togglePlay() {
+        if isControllingGlancebar {
+            Task { await self.sendGlancebarCommand("toggle") }
+            return
+        }
         if isPlaying {
             player.pause()
             isPlaying = false
@@ -594,6 +735,7 @@ public final class RadioEngine {
     }
 
     public func seek(to seconds: Double) {
+        if isControllingGlancebar { return }
         let clamped = min(max(0, seconds), max(1, durationSec))
         elapsedSec = clamped
         player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
@@ -601,6 +743,10 @@ public final class RadioEngine {
     }
 
     public func skipNext() {
+        if isControllingGlancebar {
+            Task { await self.sendGlancebarCommand("next") }
+            return
+        }
         let q = playableQueue
         guard !q.isEmpty else { return }
         if let cur = currentWork, let idx = q.firstIndex(where: { $0.work.workId == cur.workId }) {
@@ -612,6 +758,10 @@ public final class RadioEngine {
     }
 
     public func skipPrevious() {
+        if isControllingGlancebar {
+            Task { await self.sendGlancebarCommand("prev") }
+            return
+        }
         if elapsedSec > 4 {
             seek(to: 0)
             return
@@ -859,13 +1009,23 @@ public final class RadioEngine {
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in
-                if self?.isPlaying == false { self?.togglePlay() }
+                guard let self else { return }
+                if self.isControllingGlancebar {
+                    if !self.glancebarIsPlaying { self.togglePlay() }
+                } else if !self.isPlaying {
+                    self.togglePlay()
+                }
             }
             return .success
         }
         center.pauseCommand.addTarget { [weak self] _ in
             Task { @MainActor in
-                if self?.isPlaying == true { self?.togglePlay() }
+                guard let self else { return }
+                if self.isControllingGlancebar {
+                    if self.glancebarIsPlaying { self.togglePlay() }
+                } else if self.isPlaying {
+                    self.togglePlay()
+                }
             }
             return .success
         }

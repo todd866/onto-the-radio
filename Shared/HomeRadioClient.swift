@@ -69,6 +69,51 @@ public enum HomeRadioError: LocalizedError {
     }
 }
 
+public struct GlancebarNowState: Codable, Equatable, Sendable {
+    public var state: String      // "playing", "paused", "stopped"
+    public var title: String?
+    public var artist: String?
+    public var liked: Bool?
+    public var host: String?
+    public var epoch: Double?
+    public var album: String?
+    public var mood: String?
+    public var station: String?
+    public var elapsed: Double?
+    public var duration: Double?
+
+    public init(
+        state: String,
+        title: String? = nil,
+        artist: String? = nil,
+        liked: Bool? = nil,
+        host: String? = nil,
+        epoch: Double? = nil,
+        album: String? = nil,
+        mood: String? = nil,
+        station: String? = nil,
+        elapsed: Double? = nil,
+        duration: Double? = nil
+    ) {
+        self.state = state
+        self.title = title
+        self.artist = artist
+        self.liked = liked
+        self.host = host
+        self.epoch = epoch
+        self.album = album
+        self.mood = mood
+        self.station = station
+        self.elapsed = elapsed
+        self.duration = duration
+    }
+}
+
+private struct GlancebarCommandEnvelope: Decodable {
+    var ok: Bool
+    var now: GlancebarNowState?
+}
+
 private struct HomeEnvelope: Decodable {
     struct TilePoint: Decodable { var x: Double; var y: Double }
     struct StationInfo: Decodable { var id: String; var name: String; var color: String?; var count: Int? }
@@ -251,6 +296,47 @@ public enum HomeRadioClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["pt": pickToken, "ev": event, "pos": pos])
         _ = try? await session.data(for: req)
+    }
+
+    public static func fetchGlancebarNow(baseURL: String, session: URLSession = .shared) async throws -> GlancebarNowState {
+        let url = try endpointURL(baseURL: baseURL, path: "/api/glancebar/now")
+        var req = URLRequest(url: url)
+        req.setValue(ManifoldRadioClient.httpUserAgent, forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 8
+        let (data, resp) = try await session.data(for: req)
+        try validateHTTPStatus(resp)
+        return try JSONDecoder().decode(GlancebarNowState.self, from: data)
+    }
+
+    public static func sendGlancebarCommand(baseURL: String, cmd: String, session: URLSession = .shared) async throws -> GlancebarNowState? {
+        let url = try endpointURL(baseURL: baseURL, path: "/api/glancebar/cmd")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(ManifoldRadioClient.httpUserAgent, forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 8
+        req.httpBody = try JSONEncoder().encode(["cmd": cmd])
+        let (data, resp) = try await session.data(for: req)
+        try validateHTTPStatus(resp)
+        let env = try JSONDecoder().decode(GlancebarCommandEnvelope.self, from: data)
+        return env.ok ? env.now : nil
+    }
+
+    private static func endpointURL(baseURL: String, path: String) throws -> URL {
+        let clean = RadioKeychain.normalizedServer(baseURL)
+        guard !clean.isEmpty,
+              let url = URL(string: "\(clean)\(path)"),
+              let scheme = url.scheme, !scheme.isEmpty,
+              let host = url.host, !host.isEmpty else {
+            throw HomeRadioError.invalidURL
+        }
+        return url
+    }
+
+    private static func validateHTTPStatus(_ response: URLResponse) throws {
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 401 { throw HomeRadioError.unauthorized }
+        guard (200..<300).contains(code) else { throw HomeRadioError.serverError(code) }
     }
 
     private static func parseYear(_ raw: String) -> Int {

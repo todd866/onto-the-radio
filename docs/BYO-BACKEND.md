@@ -17,7 +17,7 @@
 | Layer 2: You + Your AI Agent (Private BYO Backend)                |
 | - Indexes your audio files locally on your machine / NAS          |
 | - Joins local tracks with Manifold vectors & lens anchors         |
-| - Exposes the 6 HTTP routes below behind your passphrase          |
+| - Exposes the 6 core routes (+ optional Glancebar remote routes)  |
 +---------------------------------+---------------------------------+
                                   | cookie session + Range streaming
                                   v
@@ -183,6 +183,69 @@ Request:
 ```
 
 Standard `ev` values emitted by `RadioEngine.swift`: `"like"`, `"dislike"`, `"finish"`.
+
+### 7. Optional Glancebar Remote Connector (`/api/glancebar/now`, `/api/glancebar/cmd`)
+
+If your home connector also bridges a desktop player (such as Glancebar on macOS), **Onto the Radio** probes `GET /api/glancebar/now` after home login and shows a **Mac / Local** output toggle pill in the top bar when available.
+
+#### `GET /api/glancebar/now`
+
+- Require the same session cookie (`401` if missing/invalid; return `404` if desktop remote control is not configured).
+- Response (`200 OK`):
+
+```json
+{
+  "state": "playing",
+  "title": "So What",
+  "artist": "Miles Davis",
+  "liked": true,
+  "host": "studio-mac",
+  "epoch": 1732400000.0
+}
+```
+
+| Key | Required | Meaning |
+|---|---|---|
+| `state` | Yes | `"playing"`, `"paused"`, or `"stopped"` |
+| `title` | No | Active desktop track title |
+| `artist` | No | Active desktop artist |
+| `liked` | No | Whether the active track is hearted/liked |
+| `host` | No | Display label for the desktop host |
+| `epoch` | No | Unix timestamp (seconds) of state snapshot |
+
+#### `POST /api/glancebar/cmd`
+
+- Require the same session cookie (`401` if missing/invalid).
+- Request:
+
+```json
+{
+  "cmd": "toggle"
+}
+```
+
+Standard `cmd` values sent by `RadioEngine.swift`:
+- `"toggle"` — Play/pause toggle
+- `"next"` / `"prev"` — Skip forward/back
+- `"like"` — Toggle like/heart on the active desktop track
+- `"dislike"` — Dislike and skip the active desktop track
+- `"mood:chill"`, `"mood:dance"`, `"mood:any"`, or `"mood:<stationKey>"` — Steer desktop station/mood selection
+
+- Response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "now": {
+    "state": "paused",
+    "title": "So What",
+    "artist": "Miles Davis",
+    "liked": true,
+    "host": "studio-mac",
+    "epoch": 1732400004.0
+  }
+}
+```
 
 ## K-Anonymous Manifold Enrichment
 

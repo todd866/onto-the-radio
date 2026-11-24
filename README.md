@@ -22,6 +22,8 @@ Onto the Radio follows a three-layer architecture ([Manifold architecture overvi
   - Uses Apple `FoundationModels` (iOS 26 / macOS 26 when available, guarded cleanly out of tvOS) paired with deterministic editorial heuristics so long titles fit cleanly with zero `...` truncation.
 - **User-supplied content**:
   - Import local audio files directly via `Files.app` (security-scoped bookmarks), or connect a **Home Server** in Settings.
+- **Glancebar / OtR desktop remote connector (`Shared/HomeRadioClient.swift`)**:
+  - When your home server exposes `/api/glancebar/now` and `/api/glancebar/cmd`, switch the top-bar pill between **Local** and **Mac** to pause local playback and control your desktop player (play/pause, skip, heart/like, mood & station steering).
 - **Silent QA**: Pass `-onto.silentQA` or `MUSIC_SILENT_QA=1` to mute `AVPlayer` output during automated tests.
 
 ## Quickstart: Run the Reference BYO Backend

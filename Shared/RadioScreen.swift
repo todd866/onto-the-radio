@@ -159,6 +159,34 @@ public struct RadioScreen: View {
 
                 Spacer(minLength: 0)
 
+                if engine.glancebarAvailable {
+                    let macActive = engine.controlGlancebar
+                    Button {
+                        engine.toggleGlancebarControl()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: macActive ? "desktopcomputer" : "iphone")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(macActive ? "Mac" : "Local")
+                                .font(.system(size: 12, weight: .semibold))
+                                .fixedSize()
+                        }
+                        .foregroundStyle(macActive ? pal.signal : pal.ink)
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background(
+                            macActive ? pal.signal.opacity(0.14) : pal.panel,
+                            in: Capsule(style: .continuous)
+                        )
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .strokeBorder(macActive ? pal.signal : pal.line, lineWidth: macActive ? 1.0 : 0.75)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(macActive ? "Controlling Mac Glancebar" : "Playing locally")
+                }
+
                 Button {
                     engine.showSearch = true
                 } label: {
@@ -701,29 +729,53 @@ public struct RadioScreen: View {
 
     private var miniPlayerBar: some View {
         let cur = engine.currentWork
-        let progress = engine.durationSec > 0 ? min(1, max(0, engine.elapsedSec / engine.durationSec)) : 0
+        let isMac = engine.controlGlancebar
+        let activePlaying = isMac ? engine.glancebarIsPlaying : engine.isPlaying
+        let progress: Double = {
+            if isMac {
+                if let dur = engine.glancebarNow?.duration, dur > 0,
+                   let el = engine.glancebarNow?.elapsed {
+                    return min(1, max(0, el / dur))
+                }
+                return 0
+            }
+            return engine.durationSec > 0 ? min(1, max(0, engine.elapsedSec / engine.durationSec)) : 0
+        }()
+        let titleText = isMac
+            ? AITitleFitter.heuristicFit(engine.glancebarRawTitle, maxChars: 18)
+            : (cur.map { engine.fittedTitle(for: $0, maxChars: 20) } ?? "Onto Radio")
+        let subText = isMac
+            ? AITitleFitter.heuristicFit(engine.glancebarRawSubtitle, maxChars: 22)
+            : shortCreatorName(cur?.creator ?? "")
+
         return ZStack(alignment: .bottomLeading) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Button {
                     engine.showNowPlaying = true
                 } label: {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         RadioCoverArt(
-                            seed: cur?.workId ?? "idle",
-                            colorOverride: cur?.colorHex,
-                            artURL: cur?.artUrl.flatMap(URL.init(string:)),
-                            localArtData: cur?.localArtData,
-                            energy: cur?.energy ?? 0.35,
+                            seed: isMac ? engine.glancebarArtSeed : (cur?.workId ?? "idle"),
+                            colorOverride: isMac ? nil : cur?.colorHex,
+                            artURL: isMac ? nil : cur?.artUrl.flatMap(URL.init(string:)),
+                            localArtData: isMac ? nil : cur?.localArtData,
+                            energy: isMac ? 0.45 : (cur?.energy ?? 0.35),
                             size: 42
                         )
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(cur.map { engine.fittedTitle(for: $0, maxChars: 20) } ?? "Onto Radio")
-                                .font(.system(size: 14, weight: .semibold))
+                        VStack(alignment: .leading, spacing: 1.5) {
+                            if isMac {
+                                Text("Mac · Glancebar")
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(pal.signal)
+                                    .lineLimit(1)
+                            }
+                            Text(titleText)
+                                .font(.system(size: 13.5, weight: .semibold))
                                 .foregroundStyle(pal.ink)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.84)
-                            Text(shortCreatorName(cur?.creator ?? ""))
-                                .font(.system(size: 12))
+                            Text(subText)
+                                .font(.system(size: 11.5))
                                 .foregroundStyle(pal.ink2)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.85)
@@ -735,32 +787,49 @@ public struct RadioScreen: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open now playing")
 
-                Button {
-                    engine.togglePlay()
-                } label: {
-                    Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(pal.ink)
-                        .frame(width: 40, height: 40)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(engine.isPlaying ? "Pause" : "Play")
+                HStack(spacing: 2) {
+                    if isMac {
+                        let isLiked = engine.glancebarIsLiked
+                        Button {
+                            Task { await engine.sendGlancebarCommand("like") }
+                        } label: {
+                            Image(systemName: isLiked ? "heart.fill" : "heart")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(isLiked ? pal.signal : pal.ink2)
+                                .frame(width: 36, height: 40)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isLiked ? "Unlike Mac track" : "Like Mac track")
+                    }
 
-                Button {
-                    engine.skipNext()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(pal.ink)
-                        .frame(width: 40, height: 40)
-                        .contentShape(Rectangle())
+                    Button {
+                        engine.togglePlay()
+                    } label: {
+                        Image(systemName: activePlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(pal.ink)
+                            .frame(width: isMac ? 36 : 40, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(activePlaying ? "Pause" : "Play")
+
+                    Button {
+                        engine.skipNext()
+                    } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(pal.ink)
+                            .frame(width: isMac ? 36 : 40, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Next track")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Next track")
             }
             .padding(.horizontal, 14)
-            .frame(height: 58)
+            .frame(height: isMac ? 62 : 58)
 
             GeometryReader { geo in
                 Rectangle()
@@ -806,7 +875,9 @@ public struct NowPlayingView: View {
     }
 
     private var canvasBg: Color {
-        let rgb = RadioSwatches.sleeveRGB(for: cur?.workId ?? "idle", colorOverride: cur?.colorHex)
+        let seed = engine.controlGlancebar ? engine.glancebarArtSeed : (cur?.workId ?? "idle")
+        let override = engine.controlGlancebar ? nil : cur?.colorHex
+        let rgb = RadioSwatches.sleeveRGB(for: seed, colorOverride: override)
         return pal.tintedCanvas(rgb: rgb, scheme: scheme)
     }
 
@@ -929,19 +1000,7 @@ public struct NowPlayingView: View {
             Spacer(minLength: 14)
 
             VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    RecoverableTitle(
-                        text: cur?.title ?? "Onto Radio",
-                        font: .system(size: 21, weight: .bold, design: .serif),
-                        color: pal.ink,
-                        lineLimit: 3
-                    )
-                    Text(creatorAndHookLine)
-                        .font(.system(size: 14.5))
-                        .foregroundStyle(pal.ink2)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                }
+                nowPlayingMetaHeader(subtitleFontSize: 14.5, maxTitleChars: 28)
 
                 actionPillsRow
                 scrubberView
@@ -959,7 +1018,48 @@ public struct NowPlayingView: View {
         VStack(alignment: .leading, spacing: 14) {
             heroStage(size: artSize)
 
-            VStack(alignment: .leading, spacing: 3) {
+            nowPlayingMetaHeader(subtitleFontSize: 14, maxTitleChars: 30)
+
+            actionPillsRow
+            scrubberView
+            transportCluster
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func nowPlayingMetaHeader(subtitleFontSize: CGFloat, maxTitleChars: Int) -> some View {
+        if engine.controlGlancebar {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Image(systemName: "desktopcomputer")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Mac · Glancebar")
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(pal.signal)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(pal.signal.opacity(0.14), in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(pal.signal.opacity(0.5), lineWidth: 0.75)
+                }
+
+                RecoverableTitle(
+                    text: AITitleFitter.heuristicFit(engine.glancebarRawTitle, maxChars: maxTitleChars),
+                    font: .system(size: 21, weight: .bold, design: .serif),
+                    color: pal.ink,
+                    lineLimit: 3
+                )
+                Text(AITitleFitter.heuristicFit(engine.glancebarRawSubtitle, maxChars: 34))
+                    .font(.system(size: subtitleFontSize))
+                    .foregroundStyle(pal.ink2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
                 RecoverableTitle(
                     text: cur?.title ?? "Onto Radio",
                     font: .system(size: 21, weight: .bold, design: .serif),
@@ -967,16 +1067,11 @@ public struct NowPlayingView: View {
                     lineLimit: 3
                 )
                 Text(creatorAndHookLine)
-                    .font(.system(size: 14))
+                    .font(.system(size: subtitleFontSize))
                     .foregroundStyle(pal.ink2)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
-
-            actionPillsRow
-            scrubberView
-            transportCluster
-            Spacer(minLength: 0)
         }
     }
 
@@ -997,6 +1092,13 @@ public struct NowPlayingView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
             }
+        } else if engine.controlGlancebar {
+            RadioCoverArt(
+                seed: engine.glancebarArtSeed,
+                energy: 0.45,
+                size: size,
+                cornerRadius: 12
+            )
         } else {
             RadioCoverArt(
                 seed: cur?.workId ?? "idle",
@@ -1016,64 +1118,124 @@ public struct NowPlayingView: View {
 
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                HStack(spacing: 0) {
-                    Button {
-                        if let cur { engine.toggleLike(cur) }
-                    } label: {
-                        Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                            .font(.system(size: 14))
-                            .foregroundStyle(isLiked ? pal.signal : pal.ink)
-                            .frame(width: 42, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(isLiked ? "Unlike" : "Like")
-
-                    Rectangle()
-                        .fill(pal.line)
-                        .frame(width: 0.75, height: 18)
-
-                    Button {
-                        if let cur { engine.dislikeAndSkip(cur) }
-                    } label: {
-                        Image(systemName: isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                            .font(.system(size: 14))
-                            .foregroundStyle(isDisliked ? pal.bad : pal.ink)
-                            .frame(width: 42, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dislike and skip")
-                }
-                .background(pal.panel, in: Capsule(style: .continuous))
-                .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
-
-                if let amStr = cur?.appleMusicUrl, let amURL = URL(string: amStr) {
-                    Button {
-                        openURL(amURL)
-                    } label: {
-                        Label("Apple Music", systemImage: "music.note")
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(pal.ink)
+                if engine.controlGlancebar {
+                    let macLiked = engine.glancebarIsLiked
+                    HStack(spacing: 0) {
+                        Button {
+                            Task { await engine.sendGlancebarCommand("like") }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: macLiked ? "heart.fill" : "heart")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text(macLiked ? "Liked" : "Like")
+                                    .font(.system(size: 12.5, weight: .medium))
+                            }
+                            .foregroundStyle(macLiked ? pal.signal : pal.ink)
                             .padding(.horizontal, 12)
                             .frame(height: 32)
-                            .background(pal.panel, in: Capsule(style: .continuous))
-                            .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
-                    }
-                    .buttonStyle(.plain)
-                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(macLiked ? "Unlike Mac track" : "Like Mac track")
 
-                if let cur, let ytURL = AppleMusicCatalog.youtubeMusicSearchURL(title: cur.shortTitle ?? cur.title, creator: cur.creator) {
-                    Button {
-                        openURL(ytURL)
-                    } label: {
-                        Label("YouTube", systemImage: "play.rectangle")
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(pal.ink)
-                            .padding(.horizontal, 12)
-                            .frame(height: 32)
-                            .background(pal.panel, in: Capsule(style: .continuous))
-                            .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                        Rectangle()
+                            .fill(pal.line)
+                            .frame(width: 0.75, height: 18)
+
+                        Button {
+                            engine.dislikeGlancebarTrack()
+                        } label: {
+                            Image(systemName: "hand.thumbsdown")
+                                .font(.system(size: 14))
+                                .foregroundStyle(pal.ink)
+                                .frame(width: 42, height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dislike and skip Mac track")
                     }
-                    .buttonStyle(.plain)
+                    .background(macLiked ? pal.signal.opacity(0.14) : pal.panel, in: Capsule(style: .continuous))
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .strokeBorder(macLiked ? pal.signal : pal.line, lineWidth: macLiked ? 1.0 : 0.75)
+                    }
+
+                    if let rawTitle = engine.glancebarNow?.title, !rawTitle.isEmpty,
+                       let ytURL = AppleMusicCatalog.youtubeMusicSearchURL(
+                        title: rawTitle,
+                        creator: engine.glancebarNow?.artist ?? ""
+                       ) {
+                        Button {
+                            openURL(ytURL)
+                        } label: {
+                            Label("YouTube", systemImage: "play.rectangle")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(pal.ink)
+                                .padding(.horizontal, 12)
+                                .frame(height: 32)
+                                .background(pal.panel, in: Capsule(style: .continuous))
+                                .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        Button {
+                            if let cur { engine.toggleLike(cur) }
+                        } label: {
+                            Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                                .font(.system(size: 14))
+                                .foregroundStyle(isLiked ? pal.signal : pal.ink)
+                                .frame(width: 42, height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isLiked ? "Unlike" : "Like")
+
+                        Rectangle()
+                            .fill(pal.line)
+                            .frame(width: 0.75, height: 18)
+
+                        Button {
+                            if let cur { engine.dislikeAndSkip(cur) }
+                        } label: {
+                            Image(systemName: isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                                .font(.system(size: 14))
+                                .foregroundStyle(isDisliked ? pal.bad : pal.ink)
+                                .frame(width: 42, height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dislike and skip")
+                    }
+                    .background(pal.panel, in: Capsule(style: .continuous))
+                    .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+
+                    if let amStr = cur?.appleMusicUrl, let amURL = URL(string: amStr) {
+                        Button {
+                            openURL(amURL)
+                        } label: {
+                            Label("Apple Music", systemImage: "music.note")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(pal.ink)
+                                .padding(.horizontal, 12)
+                                .frame(height: 32)
+                                .background(pal.panel, in: Capsule(style: .continuous))
+                                .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if let cur, let ytURL = AppleMusicCatalog.youtubeMusicSearchURL(title: cur.shortTitle ?? cur.title, creator: cur.creator) {
+                        Button {
+                            openURL(ytURL)
+                        } label: {
+                            Label("YouTube", systemImage: "play.rectangle")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(pal.ink)
+                                .padding(.horizontal, 12)
+                                .frame(height: 32)
+                                .background(pal.panel, in: Capsule(style: .continuous))
+                                .overlay { Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75) }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 Button {
@@ -1103,8 +1265,20 @@ public struct NowPlayingView: View {
     }
 
     private var scrubberView: some View {
-        let dur = max(1, engine.durationSec)
-        let frac = min(1, max(0, engine.elapsedSec / dur))
+        let isMac = engine.controlGlancebar
+        let macDur = engine.glancebarNow?.duration ?? 0
+        let macEl = engine.glancebarNow?.elapsed ?? 0
+        let activeEl = isMac ? (macDur > 0 ? macEl : 0) : engine.elapsedSec
+        let dur = isMac ? max(1, macDur) : max(1, engine.durationSec)
+        let frac = isMac ? (macDur > 0 ? min(1, max(0, activeEl / dur)) : 0) : min(1, max(0, activeEl / dur))
+        let rightLabel: String = {
+            if isMac {
+                if macDur > 0 { return formatTime(macDur) }
+                return "Mac · \(engine.glancebarNow?.state ?? "stopped")"
+            }
+            return cur?.isPreviewOnly == true ? "0:30 · Preview" : formatTime(engine.durationSec)
+        }()
+
         return VStack(spacing: 4) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -1125,6 +1299,7 @@ public struct NowPlayingView: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { val in
+                            guard !isMac else { return }
                             let ratio = min(1, max(0, val.location.x / max(1, geo.size.width)))
                             engine.seek(to: ratio * dur)
                         }
@@ -1134,9 +1309,9 @@ public struct NowPlayingView: View {
             .frame(height: 22)
 
             HStack {
-                Text(formatTime(engine.elapsedSec))
+                Text(formatTime(activeEl))
                 Spacer()
-                Text(cur?.isPreviewOnly == true ? "0:30 · Preview" : formatTime(engine.durationSec))
+                Text(rightLabel)
             }
             .font(.system(size: 11.5, design: .monospaced).monospacedDigit())
             .foregroundStyle(pal.ink2)
@@ -1144,7 +1319,8 @@ public struct NowPlayingView: View {
     }
 
     private var transportCluster: some View {
-        HStack {
+        let activePlaying = engine.controlGlancebar ? engine.glancebarIsPlaying : engine.isPlaying
+        return HStack {
             Button {
                 engine.nowPlayingTab = .upNext
                 engine.showNowPlayingDrawer = true
@@ -1175,14 +1351,14 @@ public struct NowPlayingView: View {
             Button {
                 engine.togglePlay()
             } label: {
-                Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: activePlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 25, weight: .bold))
                     .foregroundStyle(pal.bg)
                     .frame(width: 66, height: 66)
                     .background(pal.ink, in: Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(engine.isPlaying ? "Pause" : "Play")
+            .accessibilityLabel(activePlaying ? "Pause" : "Play")
 
             Spacer()
 
@@ -1371,6 +1547,16 @@ public struct NowPlayingView: View {
     private var whyThisView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                if engine.controlGlancebar {
+                    VStack(spacing: 7) {
+                        factRow("Output", value: "Mac · Glancebar")
+                        factRow("Track", value: engine.glancebarRawTitle)
+                        factRow("Artist", value: engine.glancebarNow?.artist ?? "—")
+                        factRow("Host", value: engine.glancebarNow?.host ?? "Mac")
+                        factRow("State", value: engine.glancebarNow?.state ?? "stopped")
+                    }
+                    Rectangle().fill(pal.line).frame(height: 0.5)
+                }
                 if let cur {
                     VStack(spacing: 7) {
                         factRow("Lens", value: engine.activeLens?.name ?? "None")
@@ -1594,7 +1780,7 @@ struct RadioSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Home radio server (music-core)") {
+                Section("Home server (Glancebar / OtR connector)") {
                     TextField("https://your-radio.example.com", text: $engine.homeServerURL)
                         #if !os(macOS)
                         .textInputAutocapitalization(.never)
@@ -1624,6 +1810,11 @@ struct RadioSettingsSheet: View {
                     Text(engine.homeServerStatus)
                         .font(.caption.monospaced())
                         .foregroundStyle(engine.homeServerConnected ? pal.good : .secondary)
+                    if engine.glancebarAvailable {
+                        Label("Glancebar remote ready", systemImage: "desktopcomputer")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(pal.signal)
+                    }
                 }
 
                 #if !os(tvOS)
