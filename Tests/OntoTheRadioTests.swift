@@ -467,6 +467,139 @@ final class OntoTheRadioTests: XCTestCase {
         let reloaded = RadioEngine(defaults: suite, homeSession: session)
         XCTAssertEqual(reloaded.homeServerURL, "")
     }
+
+    @MainActor
+    func testFullHomeHydrationPreservesCatalogAcrossStationSwitchesAndRendersB8() async throws {
+        let suiteName = "com.iantodd.ontotheradio.hydration.\(UUID().uuidString)"
+        let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [MockGlancebarURLProtocol.self]
+        let session = URLSession(configuration: cfg)
+
+        MockGlancebarURLProtocol.handler = { req in
+            let url = try XCTUnwrap(req.url)
+            if url.path == "/api/home" {
+                let body = """
+                {
+                  "shelves": [
+                    {
+                      "id": "library",
+                      "title": "Glancebar Lossless",
+                      "tiles": [
+                        {"kind":"song","s":"tile01","title":"Tile One","sub":"Artist One · Album (2025)","artist":"Artist One","art":true,"color":"#0ea5e9","point":{"x":-0.45,"y":0.42},"e":0.22,"h":0.14,"dur":198,"genre":"Ambient","year":2025}
+                      ]
+                    },
+                    {
+                      "id": "stations",
+                      "title": "Stations",
+                      "tiles": [
+                        {"kind":"station","title":"Alt","sub":"191 tracks","color":"#6366f1","station":{"id":"alt","name":"Alt","color":"#6366f1","count":191}},
+                        {"kind":"station","title":"Chill","sub":"66 tracks","color":"#0ea5e9","station":{"id":"chill","name":"Chill","color":"#0ea5e9","count":66}}
+                      ]
+                    }
+                  ]
+                }
+                """.data(using: .utf8)!
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            if url.path == "/api/queue" {
+                let rawBody = Self.requestBodyData(req)
+                let bodyObj = (try? JSONSerialization.jsonObject(with: rawBody) as? [String: Any]) ?? [:]
+                let mood = bodyObj["mood"] as? String ?? "all"
+                let requestedN = bodyObj["n"] as? Int ?? 18
+                let picks: [[String: Any]]
+                if mood == "station:alt" {
+                    picks = [
+                        ["s":"alt01","a":"Gang of Youths","t":"Le Symbolique","al":"angel in realtime.","y":2022,"g":"Alternative","e":0.52,"h":0.34,"tag":"Alt","dur":280,"color":"#6366f1","art":true,"pt":"pt.alt01","x":0.31,"yy":0.49],
+                        ["s":"alt02","a":"Bombay Bicycle Club","t":"I Can Hardly Speak","al":"Everything Else","y":2020,"g":"Alternative","e":0.58,"h":0.39,"tag":"Alt","dur":225,"color":"#6366f1","art":true,"pt":"pt.alt02","x":0.42,"yy":0.36],
+                    ]
+                } else {
+                    if requestedN != 200 {
+                        return (HTTPURLResponse(url: url, statusCode: 400, httpVersion: nil, headerFields: nil)!, Data())
+                    }
+                    picks = [
+                        ["s":"tile01","a":"Artist One","t":"Tile One","al":"Album","y":2025,"g":"Ambient","e":0.22,"h":0.14,"tag":"Chill","dur":198,"color":"#0ea5e9","art":true,"pt":"pt.tile01","x":-0.45,"yy":0.42],
+                        ["s":"dance01","a":"ODESZA","t":"Healing Grid","al":"The Last Goodbye","y":2022,"g":"Electronic","e":0.79,"h":0.42,"tag":"Dance","dur":186,"color":"#e11d48","art":true,"pt":"pt.dance01","x":0.55,"yy":-0.48],
+                        ["s":"rap01","a":"RJD2","t":"Ghostwriter","al":"Deadringer","y":2002,"g":"Hip-Hop/Rap","e":0.64,"h":0.58,"tag":"Rap","dur":317,"color":"#f59e0b","art":true,"pt":"pt.rap01","x":-0.42,"yy":-0.52],
+                        ["s":"alt02","a":"Bombay Bicycle Club","t":"I Can Hardly Speak","al":"Everything Else","y":2020,"g":"Alternative","e":0.58,"h":0.39,"tag":"Alt","dur":225,"color":"#6366f1","art":true,"pt":"pt.alt02","x":0.42,"yy":0.36],
+                        ["s":"alt01","a":"Gang of Youths","t":"Le Symbolique","al":"angel in realtime.","y":2022,"g":"Alternative","e":0.52,"h":0.34,"tag":"Alt","dur":280,"color":"#6366f1","art":true,"pt":"pt.alt01","x":0.31,"yy":0.49],
+                    ]
+                }
+                let data = try JSONSerialization.data(withJSONObject: ["picks": picks])
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+            }
+            if url.path == "/api/glancebar/now" {
+                let body = #"{"state":"playing","title":"Feel First Life","artist":"Jon Hopkins","liked":false,"host":"Mac","epoch":1732400200}"#.data(using: .utf8)!
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            return (HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!, Data())
+        }
+
+        let engine = RadioEngine(defaults: suite, homeSession: session)
+        engine.homeServerURL = "https://mock.example.com"
+        await engine.refreshHomeLibrary()
+
+        XCTAssertTrue(engine.homeServerConnected)
+        XCTAssertEqual(engine.homeWorks.count, 5)
+        XCTAssertEqual(engine.homeServerStatus, "Connected · 5 tracks")
+        XCTAssertEqual(engine.homeWorks.first?.pickToken, "pt.tile01")
+        XCTAssertEqual(engine.homeWorks.first?.x, -0.45)
+        XCTAssertEqual(engine.homeWorks.first?.y, 0.42)
+        XCTAssertEqual(engine.homeWorks.first?.durationSec, 198)
+
+        let altLens = try XCTUnwrap(engine.homeStations.first(where: { $0.id == "home-station:alt" }))
+        engine.selectLens(altLens)
+        for _ in 0..<30 {
+            if engine.homeWorks.first?.workId == "home:alt01" { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        // Station picks promoted to the front in connector order, while remaining catalog stays available
+        XCTAssertEqual(engine.homeWorks.count, 5)
+        XCTAssertEqual(engine.homeWorks.prefix(2).map(\.workId), ["home:alt01", "home:alt02"])
+        XCTAssertEqual(engine.playableQueue.prefix(2).map(\.work.workId), ["home:alt01", "home:alt02"])
+        XCTAssertTrue(engine.allWorks.contains(where: { $0.workId == "home:rap01" && $0.x != nil && $0.y != nil }))
+
+        // Headless Light & Dark PNG verification across Home, Map, Library, and Now Playing
+        let size = CGSize(width: 390, height: 844)
+        for style: UIUserInterfaceStyle in [.light, .dark] {
+            let scheme: ColorScheme = style == .dark ? .dark : .light
+            let tag = style == .dark ? "dark" : "light"
+
+            for tab in RadioRootTab.allCases {
+                engine.activeTab = tab
+                let tabSlug = tab.rawValue.lowercased()
+                try renderPNG(
+                    view: RadioScreen(engine: engine).environment(\.colorScheme, scheme),
+                    style: style,
+                    size: size,
+                    to: "/tmp/ontotheradio-b8-\(tabSlug)-\(tag).png"
+                )
+            }
+            try renderPNG(
+                view: NowPlayingView(engine: engine).environment(\.colorScheme, scheme),
+                style: style,
+                size: size,
+                to: "/tmp/ontotheradio-b8-np-\(tag).png"
+            )
+        }
+    }
+
+    private static func requestBodyData(_ req: URLRequest) -> Data {
+        if let data = req.httpBody { return data }
+        guard let stream = req.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var out = Data()
+        var buf = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buf, maxLength: buf.count)
+            if count <= 0 { break }
+            out.append(buf, count: count)
+        }
+        return out
+    }
 }
 
 private final class MockGlancebarURLProtocol: URLProtocol {

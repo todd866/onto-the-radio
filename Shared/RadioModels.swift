@@ -294,9 +294,13 @@ public enum RadioMath {
             return v
         }
 
-        return pool.map { cand in
+        let isHomeStation = (lens?.id.hasPrefix("home-station:") == true) && mapTarget == nil
+
+        return pool.enumerated().map { idx, cand in
             var baseScore = 0.72
-            if let lens {
+            if isHomeStation && cand.workId.hasPrefix("home:") {
+                baseScore = max(0.62, 0.84 - Double(idx) * 0.0005)
+            } else if let lens {
                 if let direct = lens.anchors.first(where: { $0.workId == cand.workId }) {
                     baseScore = min(1.0, 0.88 + direct.weight * 0.12)
                 } else if let cv = cand.vec32, !cv.isEmpty {

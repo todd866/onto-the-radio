@@ -105,6 +105,7 @@ public final class RadioEngine {
 
     private let defaults: UserDefaults
     private let homeSession: URLSession
+    private var fullHomeCatalog: [RadioWork] = []
     let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
@@ -457,13 +458,30 @@ public final class RadioEngine {
         }
     }
 
+    private func mergeHomeWorks(primary: [RadioWork], secondary: [RadioWork]) -> [RadioWork] {
+        var seen = Set<String>()
+        var combined: [RadioWork] = []
+        for work in primary + secondary where seen.insert(work.workId).inserted {
+            combined.append(work)
+        }
+        return combined
+    }
+
     private func loadHomeData(server: String) async throws {
         let home = try await HomeRadioClient.fetchHome(baseURL: server, session: homeSession)
-        homeWorks = home.tracks
+        let hydrated = (try? await HomeRadioClient.fetchStationQueue(
+            baseURL: server,
+            mood: "all",
+            count: 200,
+            session: homeSession
+        )) ?? []
+        let catalog = mergeHomeWorks(primary: hydrated, secondary: home.tracks)
+        fullHomeCatalog = catalog
+        homeWorks = catalog
         homeStations = home.stations
         homeServerConnected = true
         defaults.set(false, forKey: Self.homeServerDisconnectedKey)
-        homeServerStatus = "Connected · \(home.tracks.count) tracks"
+        homeServerStatus = "Connected · \(catalog.count) tracks"
         if selectedLensID == "lens:radio:late-wire", let firstStation = homeStations.first {
             selectedLensID = firstStation.id
         }
@@ -494,6 +512,7 @@ public final class RadioEngine {
         defaults.set(true, forKey: Self.homeServerDisconnectedKey)
         homeServerURL = ""
         saveSettings()
+        fullHomeCatalog = []
         homeWorks = []
         homeStations = []
         homeServerConnected = false
@@ -610,10 +629,14 @@ public final class RadioEngine {
             let server = homeServerURL
             let session = homeSession
             Task {
-                if let picks = try? await HomeRadioClient.fetchStationQueue(baseURL: server, mood: "station:\(stationKey)", session: session),
-                   !picks.isEmpty {
+                if let picks = try? await HomeRadioClient.fetchStationQueue(
+                    baseURL: server,
+                    mood: "station:\(stationKey)",
+                    count: 40,
+                    session: session
+                ), !picks.isEmpty {
                     await MainActor.run {
-                        self.homeWorks = picks
+                        self.homeWorks = self.mergeHomeWorks(primary: picks, secondary: self.fullHomeCatalog)
                         if let first = picks.first {
                             self.play(first, autoStart: true)
                         }

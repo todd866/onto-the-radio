@@ -126,6 +126,11 @@ private struct HomeEnvelope: Decodable {
         var art: Bool?
         var color: String?
         var point: TilePoint?
+        var e: Double?
+        var h: Double?
+        var dur: Double?
+        var genre: String?
+        var year: Int?
         var mood: String?
         var logo: String?
         var station: StationInfo?
@@ -203,19 +208,20 @@ public enum HomeRadioClient {
                     let wid = "home:\(sha)"
                     if seenWorks.insert(wid).inserted {
                         let artStr = (tile.art ?? false) ? "\(clean)/api/art/\(sha)?size=300" : nil
-                        let year = parseYear(tile.sub)
+                        let year = tile.year ?? parseYear(tile.sub)
+                        let durSec = tile.dur.map { Int($0.rounded()) } ?? 210
                         tracks.append(
                             RadioWork(
                                 workId: wid,
                                 title: tile.title,
                                 creator: tile.artist ?? tile.sub,
                                 year: year,
-                                kind: shelf.title,
+                                kind: tile.genre ?? shelf.title,
                                 summary: tile.sub,
-                                energy: 0.45,
-                                heaviness: 0.35,
+                                energy: tile.e ?? 0.45,
+                                heaviness: tile.h ?? 0.35,
                                 streamUrl: "\(clean)/api/audio/\(sha)?q=aac",
-                                durationSec: 210,
+                                durationSec: durSec,
                                 vec32: nil,
                                 localBookmark: nil,
                                 x: tile.point?.x,
@@ -250,14 +256,20 @@ public enum HomeRadioClient {
         return (tracks, stations)
     }
 
-    public static func fetchStationQueue(baseURL: String, mood: String, session: URLSession = .shared) async throws -> [RadioWork] {
+    public static func fetchStationQueue(
+        baseURL: String,
+        mood: String,
+        count: Int = 18,
+        session: URLSession = .shared
+    ) async throws -> [RadioWork] {
         let clean = RadioKeychain.normalizedServer(baseURL)
         guard let url = URL(string: "\(clean)/api/queue") else { throw HomeRadioError.invalidURL }
+        let clampedCount = min(200, max(1, count))
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(ManifoldRadioClient.httpUserAgent, forHTTPHeaderField: "User-Agent")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["mood": mood, "n": 18])
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["mood": mood, "n": clampedCount])
         let (data, resp) = try await session.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code == 401 { throw HomeRadioError.unauthorized }
