@@ -586,6 +586,134 @@ final class OntoTheRadioTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testOfflineCatalogAudioArtAndPrioritizationRendersB9() async throws {
+        let suiteName = "com.iantodd.ontotheradio.offline.\(UUID().uuidString)"
+        let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let tmpRoot = FileManager.default.temporaryDirectory.appendingPathComponent("otr-offline-test-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            suite.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: tmpRoot)
+        }
+
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [MockGlancebarURLProtocol.self]
+        let session = URLSession(configuration: cfg)
+
+        let fakePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x01, 0x02, 0x03])
+        var requestedAudioQueries: [String] = []
+        MockGlancebarURLProtocol.handler = { req in
+            let url = try XCTUnwrap(req.url)
+            if url.path.hasPrefix("/api/audio/") {
+                requestedAudioQueries.append(url.query ?? "")
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(repeating: 0xAB, count: 2048))
+            }
+            if url.path.hasPrefix("/api/art/") {
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, fakePNG)
+            }
+            return (HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!, Data())
+        }
+
+        let store = OfflineMediaStore(rootURL: tmpRoot)
+        let wCached = RadioWork(
+            workId: "home:off01",
+            title: "Midnight Drift",
+            creator: "Jon Hopkins",
+            year: 2018,
+            kind: "Electronic",
+            summary: "Ambient",
+            streamUrl: "https://mock.example.com/api/audio/off01",
+            durationSec: 210,
+            x: -0.4,
+            y: 0.4,
+            artUrl: "https://mock.example.com/api/art/off01",
+            colorHex: "#0ea5e9"
+        )
+        let wRemote = RadioWork(
+            workId: "home:rem02",
+            title: "Solar Flare",
+            creator: "Bicep",
+            year: 2021,
+            kind: "Electronic",
+            summary: "Dance",
+            streamUrl: "https://mock.example.com/api/audio/rem02",
+            durationSec: 240,
+            x: 0.5,
+            y: -0.4,
+            artUrl: "https://mock.example.com/api/art/rem02",
+            colorHex: "#e11d48"
+        )
+        let st = RadioLens(
+            id: "home-station:chill",
+            domain: "music",
+            name: "Chill",
+            summary: "65 tracks",
+            issuer: "home",
+            issuerHandle: "home",
+            modelId: "home-library",
+            anchors: [],
+            colorHex: "#0ea5e9"
+        )
+        store.saveCatalog(OfflineCatalogSnapshot(
+            homeWorks: [wRemote, wCached],
+            homeStations: [st],
+            works: ManifoldRadioClient.bundledWorks,
+            lenses: ManifoldRadioClient.bundledLenses,
+            contributors: []
+        ))
+        let audioFile = store.saveAudio(Data(repeating: 0xCD, count: 1024), for: wCached, ext: "m4a")
+        XCTAssertNotNil(audioFile)
+        XCTAssertNotNil(store.saveArt(fakePNG, for: "off01"))
+
+        let engine = RadioEngine(defaults: suite, homeSession: session, offlineStore: store)
+        XCTAssertEqual(engine.homeWorks.count, 2)
+        XCTAssertEqual(engine.offlineTrackCount, 1)
+        XCTAssertGreaterThan(engine.offlineBytes, 0)
+        XCTAssertEqual(engine.resolvePlaybackURL(for: wCached)?.isFileURL, true)
+        XCTAssertEqual(engine.resolvePlaybackURL(for: wRemote)?.isFileURL, false)
+        XCTAssertEqual(store.localArtURL(forRemoteURL: try XCTUnwrap(URL(string: "https://mock.example.com/api/art/off01")))?.isFileURL, true)
+
+        engine.isOffline = true
+        XCTAssertEqual(engine.homeQuickPicks.first?.workId, "home:off01")
+        XCTAssertEqual(engine.playableQueue.first?.work.workId, "home:off01")
+        XCTAssertEqual(engine.offlineWorks.map(\.workId), ["home:off01"])
+
+        engine.isOffline = false
+        await engine.syncOfflinePack(limit: 2)
+        XCTAssertEqual(requestedAudioQueries, ["q=aac"])
+        XCTAssertEqual(engine.offlineTrackCount, 2)
+        XCTAssertTrue(engine.isOfflinePlayable(wRemote))
+        XCTAssertNotNil(store.localArtURL(for: wRemote))
+
+        var observedAction: String?
+        let obs = NotificationCenter.default.addObserver(forName: .otrQuickAction, object: nil, queue: nil) { note in
+            observedAction = note.object as? String
+        }
+        defer { NotificationCenter.default.removeObserver(obs) }
+        RadioQuickActionRouter.dispatch("com.iantodd.ontotheradio.offline")
+        XCTAssertEqual(observedAction, "com.iantodd.ontotheradio.offline")
+
+        let size = CGSize(width: 390, height: 844)
+        for style: UIUserInterfaceStyle in [.light, .dark] {
+            let scheme: ColorScheme = style == .dark ? .dark : .light
+            let tag = style == .dark ? "dark" : "light"
+            engine.activeTab = .home
+            try renderPNG(
+                view: RadioScreen(engine: engine).environment(\.colorScheme, scheme),
+                style: style,
+                size: size,
+                to: "/tmp/ontotheradio-b9-home-\(tag).png"
+            )
+            engine.activeTab = .library
+            try renderPNG(
+                view: RadioScreen(engine: engine).environment(\.colorScheme, scheme),
+                style: style,
+                size: size,
+                to: "/tmp/ontotheradio-b9-library-\(tag).png"
+            )
+        }
+    }
+
     private static func requestBodyData(_ req: URLRequest) -> Data {
         if let data = req.httpBody { return data }
         guard let stream = req.httpBodyStream else { return Data() }

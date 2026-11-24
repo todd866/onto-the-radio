@@ -39,6 +39,33 @@
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.iantodd.ontotheradio.offline</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Offline Library</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>arrow.down.circle.fill</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.iantodd.ontotheradio.map</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Sound Map</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>map</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.iantodd.ontotheradio.remote</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Mac Remote</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>desktopcomputer</string>
+		</dict>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

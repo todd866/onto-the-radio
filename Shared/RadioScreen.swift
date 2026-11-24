@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 public enum LibraryFilter: String, CaseIterable, Identifiable {
     case all = "All"
+    case offline = "Offline"
     case liked = "Liked"
     case local = "Local"
     case pool = "Pool"
@@ -90,7 +91,33 @@ public struct RadioScreen: View {
         }
         #endif
         .task {
+            if let pending = RadioQuickActionRouter.consumePending() {
+                applyQuickAction(pending)
+            }
             await engine.syncFromManifold()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .otrQuickAction)) { note in
+            if let type = note.object as? String {
+                _ = RadioQuickActionRouter.consumePending()
+                applyQuickAction(type)
+            }
+        }
+    }
+
+    private func applyQuickAction(_ type: String) {
+        engine.showSearch = false
+        switch type {
+        case "com.iantodd.ontotheradio.offline":
+            libraryFilter = .offline
+            engine.activeTab = .library
+        case "com.iantodd.ontotheradio.map":
+            engine.activeTab = .map
+        case "com.iantodd.ontotheradio.remote":
+            engine.activeTab = .home
+            engine.controlGlancebar = true
+            Task { await engine.refreshGlancebarNow() }
+        default:
+            break
         }
     }
 
@@ -561,6 +588,8 @@ public struct RadioScreen: View {
         let items: [RadioWork] = switch libraryFilter {
         case .all:
             engine.playableQueue.map(\.work)
+        case .offline:
+            engine.offlineWorks
         case .liked:
             engine.allWorks.filter { engine.likedIDs.contains($0.workId) }
         case .local:
@@ -571,44 +600,64 @@ public struct RadioScreen: View {
 
         return ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    #if !os(tvOS)
-                    Button {
-                        engine.showImporter = true
-                    } label: {
-                        Label("Add files", systemImage: "plus")
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(pal.bg)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        #if !os(tvOS)
+                        Button {
+                            engine.showImporter = true
+                        } label: {
+                            Label("Add files", systemImage: "plus")
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .foregroundStyle(pal.bg)
+                                .padding(.horizontal, 14)
+                                .frame(height: 34)
+                                .background(pal.ink, in: Capsule(style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        #endif
+
+                        Button {
+                            engine.showSettings = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                if engine.homeServerConnected {
+                                    Circle().fill(pal.good).frame(width: 7, height: 7)
+                                }
+                                Text(engine.homeServerConnected ? "Home connected" : "Home server")
+                            }
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(pal.ink)
                             .padding(.horizontal, 14)
                             .frame(height: 34)
-                            .background(pal.ink, in: Capsule(style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    #endif
-
-                    Button {
-                        engine.showSettings = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            if engine.homeServerConnected {
-                                Circle().fill(pal.good).frame(width: 7, height: 7)
+                            .background(pal.panel, in: Capsule(style: .continuous))
+                            .overlay {
+                                Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
                             }
-                            Text(engine.homeServerConnected ? "Home connected" : "Home server")
                         }
-                        .font(.system(size: 13.5, weight: .medium))
-                        .foregroundStyle(pal.ink)
-                        .padding(.horizontal, 14)
-                        .frame(height: 34)
-                        .background(pal.panel, in: Capsule(style: .continuous))
-                        .overlay {
-                            Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                        .buttonStyle(.plain)
 
-                    Spacer(minLength: 0)
+                        Button {
+                            libraryFilter = .offline
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(engine.isOffline ? pal.signal : pal.ink2)
+                                Text("\(engine.offlineTrackCount) offline")
+                            }
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(pal.ink)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background(pal.panel, in: Capsule(style: .continuous))
+                            .overlay {
+                                Capsule(style: .continuous).strokeBorder(pal.line, lineWidth: 0.75)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
                 }
-                .padding(.horizontal, 16)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -657,6 +706,7 @@ public struct RadioScreen: View {
 
     private var libraryEmptyMessage: String {
         switch libraryFilter {
+        case .offline: return "Downloaded home tracks and imported files appear here for airplane mode."
         case .liked: return "Tracks you like appear here."
         case .local: return "Import audio files from Files to play offline."
         case .pool: return "Manifold reference coordinates will appear after sync."
@@ -1830,6 +1880,34 @@ struct RadioSettingsSheet: View {
                     }
                 }
                 #endif
+
+                Section("Offline pack") {
+                    HStack {
+                        Text("\(engine.offlineTrackCount) tracks cached")
+                        Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: engine.offlineBytes, countStyle: .file))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    if let progress = engine.offlineSyncProgress {
+                        ProgressView(value: progress)
+                    } else {
+                        Button("Download 50 tracks (AAC)") {
+                            Task { await engine.syncOfflinePack(limit: 50) }
+                        }
+                        .disabled(engine.homeWorks.isEmpty)
+                    }
+                    if engine.offlineTrackCount > 0 && engine.offlineSyncProgress == nil {
+                        Button("Clear offline cache", role: .destructive) {
+                            engine.clearOfflineCache()
+                        }
+                    }
+                    if !engine.offlineSyncStatus.isEmpty {
+                        Text(engine.offlineSyncStatus)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 Section("Manifold embedding pool") {
                     TextField("https://manifold-chi.vercel.app", text: $engine.hubURL)

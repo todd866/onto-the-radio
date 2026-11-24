@@ -427,12 +427,27 @@ private actor ArtworkFetchCache {
 
     func image(for url: URL) async -> Image? {
         if let hit = memory[url] { return hit }
+        if url.isFileURL, let data = try? Data(contentsOf: url), let img = decodeImage(from: data) {
+            if memory.count > 120 { memory.removeAll() }
+            memory[url] = img
+            return img
+        }
+        if let localURL = OfflineMediaStore.shared.localArtURL(forRemoteURL: url),
+           let data = try? Data(contentsOf: localURL),
+           let img = decodeImage(from: data) {
+            if memory.count > 120 { memory.removeAll() }
+            memory[url] = img
+            return img
+        }
         var req = URLRequest(url: url)
         req.setValue("OntoTheRadio/1.0 (https://github.com/todd866/onto-the-radio)", forHTTPHeaderField: "User-Agent")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let http = resp as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
             return nil
+        }
+        if let artKey = OfflineMediaStore.shared.mediaKey(fromArtURL: url) {
+            OfflineMediaStore.shared.saveArt(data, for: artKey)
         }
         guard let img = decodeImage(from: data) else { return nil }
         if memory.count > 120 { memory.removeAll() }

@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import MediaPlayer
+import Network
 import Observation
 
 public enum RadioRootTab: String, CaseIterable, Identifiable {
@@ -25,6 +26,26 @@ public enum NowPlayingTab: String, CaseIterable, Identifiable {
     case trust = "Trust"
 
     public var id: String { rawValue }
+}
+
+public extension Notification.Name {
+    static let otrQuickAction = Notification.Name("com.iantodd.ontotheradio.quickAction")
+}
+
+@MainActor
+public enum RadioQuickActionRouter {
+    private static var pendingType: String?
+
+    public static func dispatch(_ type: String) {
+        pendingType = type
+        NotificationCenter.default.post(name: .otrQuickAction, object: type)
+    }
+
+    public static func consumePending() -> String? {
+        let current = pendingType
+        pendingType = nil
+        return current
+    }
 }
 
 @MainActor
@@ -79,8 +100,14 @@ public final class RadioEngine {
     public var playbackNotice: String? = nil
     public var aiFittedTitles: [String: String] = [:]
     public var appleMusicCache: [String: AppleMusicLookupResult] = [:]
+    public var isOffline: Bool = false
+    public var offlineTrackCount: Int = 0
+    public var offlineBytes: Int64 = 0
+    public var offlineSyncProgress: Double? = nil
+    public var offlineSyncStatus: String = ""
 
     public let cloudPass = CloudPassStore()
+    public let offlineStore: OfflineMediaStore
 
     private static let homeServerDisconnectedKey = "otr.homeServerDisconnected"
 
@@ -113,11 +140,18 @@ public final class RadioEngine {
     @ObservationIgnored private var glancebarPollTask: Task<Void, Never>?
     @ObservationIgnored private var consecutiveFailures: Int = 0
     @ObservationIgnored private var inFlightFitKeys: Set<String> = []
+    @ObservationIgnored private var inFlightCacheIDs: Set<String> = []
+    @ObservationIgnored private var networkMonitor: NWPathMonitor?
     private let silentQA: Bool
 
-    public init(defaults: UserDefaults = .standard, homeSession: URLSession = .shared) {
+    public init(
+        defaults: UserDefaults = .standard,
+        homeSession: URLSession = .shared,
+        offlineStore: OfflineMediaStore = .shared
+    ) {
         self.defaults = defaults
         self.homeSession = homeSession
+        self.offlineStore = offlineStore
         let savedHub = defaults.string(forKey: "otr.hubURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.hubURL = savedHub.isEmpty ? ManifoldRadioClient.defaultHub : savedHub
         let savedHome = (defaults.string(forKey: "otr.homeServerURL") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -154,6 +188,18 @@ public final class RadioEngine {
            let decodedAM = try? JSONDecoder().decode([String: AppleMusicLookupResult].self, from: savedAM) {
             self.appleMusicCache = decodedAM
         }
+        if let snap = offlineStore.loadCatalog() {
+            if !snap.works.isEmpty { self.works = snap.works }
+            if !snap.lenses.isEmpty { self.lenses = snap.lenses }
+            self.fullHomeCatalog = snap.homeWorks
+            self.homeWorks = snap.homeWorks
+            self.homeStations = snap.homeStations
+            self.contributors = snap.contributors
+            if !snap.homeWorks.isEmpty {
+                self.homeServerStatus = "Offline ready · \(snap.homeWorks.count) catalog"
+            }
+        }
+        refreshOfflineStats()
 
         self.currentWork = playableQueue.first?.work ?? rankedQueue.first?.work ?? works.first
         if let dur = currentWork?.durationSec {
@@ -162,6 +208,7 @@ public final class RadioEngine {
         installObservers()
         if !silentQA {
             setupRemoteCommands()
+            startNetworkMonitor()
         }
     }
 
@@ -223,8 +270,31 @@ public final class RadioEngine {
         }
     }
 
+    public func isOfflinePlayable(_ work: RadioWork) -> Bool {
+        work.localBookmark != nil || offlineStore.isAudioCached(work)
+    }
+
+    public var offlineWorks: [RadioWork] {
+        var seen = Set<String>()
+        var result: [RadioWork] = []
+        for w in localWorks + homeWorks + works where seen.insert(w.workId).inserted {
+            if isOfflinePlayable(w) {
+                result.append(w)
+            }
+        }
+        return result
+    }
+
     public var homeQuickPicks: [RadioWork] {
-        let priority = localWorks + homeWorks
+        let basePriority = localWorks + homeWorks
+        let priority: [RadioWork]
+        if isOffline {
+            let cachedFirst = basePriority.filter { isOfflinePlayable($0) }
+            let rest = basePriority.filter { !isOfflinePlayable($0) }
+            priority = cachedFirst + rest
+        } else {
+            priority = basePriority
+        }
         var picks: [RadioWork] = []
         var seen = Set<String>()
         for w in priority where w.isPlayable && seen.insert(w.workId).inserted {
@@ -299,7 +369,13 @@ public final class RadioEngine {
     }
 
     public var playableQueue: [RankedRadioTrack] {
-        let base = rankedQueue.filter { $0.work.isPlayable }
+        let rawBase = rankedQueue.filter { $0.work.isPlayable }
+        let base: [RankedRadioTrack]
+        if isOffline {
+            base = rawBase.filter { isOfflinePlayable($0.work) } + rawBase.filter { !isOfflinePlayable($0.work) }
+        } else {
+            base = rawBase
+        }
         if queuedNextIDs.isEmpty { return base }
         let byId = Dictionary(uniqueKeysWithValues: base.map { ($0.work.workId, $0) })
         var pinned: [RankedRadioTrack] = []
@@ -373,6 +449,7 @@ public final class RadioEngine {
                 }
             }
             contributors = snap.contributors
+            persistOfflineCatalog()
             if currentWork == nil || currentWork?.isPlayable == false {
                 currentWork = playableQueue.first?.work ?? rankedQueue.first?.work
             }
@@ -494,6 +571,8 @@ public final class RadioEngine {
         } else if currentWork == nil, let first = playableQueue.first?.work {
             currentWork = first
         }
+        persistOfflineCatalog()
+        refreshOfflineStats()
         if let now = try? await HomeRadioClient.fetchGlancebarNow(baseURL: server, session: homeSession) {
             glancebarAvailable = true
             glancebarNow = now
@@ -626,6 +705,10 @@ public final class RadioEngine {
                 Task { await self.sendGlancebarCommand("mood:\(stationKey)") }
                 return
             }
+            if isOffline, let top = playableQueue.first?.work {
+                play(top, autoStart: isPlaying)
+                return
+            }
             let server = homeServerURL
             let session = homeSession
             Task {
@@ -746,6 +829,9 @@ public final class RadioEngine {
         if url.isFileURL {
             item = AVPlayerItem(url: url)
         } else {
+            if !silentQA && work.workId.hasPrefix("home:") {
+                cacheWorkInBackground(work)
+            }
             var opts: [String: Any] = [
                 AVURLAssetHTTPUserAgentKey: ManifoldRadioClient.httpUserAgent
             ]
@@ -969,7 +1055,7 @@ public final class RadioEngine {
             || w.summary.lowercased().contains(query)
     }
 
-    private func resolvePlaybackURL(for work: RadioWork) -> URL? {
+    public func resolvePlaybackURL(for work: RadioWork) -> URL? {
         if let bmk = work.localBookmark {
             var stale = false
             #if os(macOS)
@@ -980,6 +1066,9 @@ public final class RadioEngine {
             _ = u?.startAccessingSecurityScopedResource()
             return u
         }
+        if let cached = offlineStore.localAudioURL(for: work) {
+            return cached
+        }
         if let s = work.streamUrl, !s.isEmpty, let u = URL(string: s) {
             return u
         }
@@ -987,6 +1076,144 @@ public final class RadioEngine {
             return u
         }
         return nil
+    }
+
+    public func refreshOfflineStats() {
+        let stats = offlineStore.stats()
+        offlineTrackCount = stats.trackCount
+        offlineBytes = stats.totalBytes
+    }
+
+    public func persistOfflineCatalog() {
+        let snap = OfflineCatalogSnapshot(
+            homeWorks: fullHomeCatalog.isEmpty ? homeWorks : fullHomeCatalog,
+            homeStations: homeStations,
+            works: works,
+            lenses: lenses,
+            contributors: contributors
+        )
+        offlineStore.saveCatalog(snap)
+    }
+
+    public func clearOfflineCache() {
+        offlineStore.clearMedia()
+        refreshOfflineStats()
+        offlineSyncProgress = nil
+        offlineSyncStatus = "Cleared offline cache"
+    }
+
+    public func syncOfflinePack(limit: Int = 50) async {
+        guard offlineSyncProgress == nil else { return }
+        var seen = Set<String>()
+        var candidates: [RadioWork] = []
+        let homePriority = playableQueue.map(\.work).filter { $0.workId.hasPrefix("home:") }
+            + fullHomeCatalog
+            + homeWorks
+        for w in homePriority where seen.insert(w.workId).inserted {
+            guard w.isPlayable, w.localBookmark == nil else { continue }
+            guard !offlineStore.isAudioCached(w) else { continue }
+            guard (w.streamUrl ?? "").isEmpty == false else { continue }
+            candidates.append(w)
+            if candidates.count >= limit { break }
+        }
+        guard !candidates.isEmpty else {
+            refreshOfflineStats()
+            offlineSyncStatus = "All \(offlineTrackCount) offline tracks ready"
+            return
+        }
+        offlineSyncProgress = 0
+        offlineSyncStatus = "Downloading 0/\(candidates.count)…"
+        var saved = 0
+        for (idx, work) in candidates.enumerated() {
+            if await cacheAudioAndArt(for: work) {
+                saved += 1
+            }
+            refreshOfflineStats()
+            offlineSyncProgress = Double(idx + 1) / Double(candidates.count)
+            offlineSyncStatus = "Cached \(saved) of \(idx + 1)/\(candidates.count)"
+        }
+        persistOfflineCatalog()
+        offlineSyncProgress = nil
+        offlineSyncStatus = "Ready · \(offlineTrackCount) tracks offline"
+    }
+
+    private func startNetworkMonitor() {
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let unavailable = path.status != .satisfied
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let wasOffline = self.isOffline
+                self.isOffline = unavailable
+                if unavailable && !self.isPlaying {
+                    if let cur = self.currentWork, !self.isOfflinePlayable(cur),
+                       let offlineHit = self.offlineWorks.first {
+                        self.currentWork = offlineHit
+                        self.durationSec = Double(offlineHit.durationSec ?? 210)
+                    }
+                } else if wasOffline && !unavailable {
+                    await self.syncFromManifold()
+                }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.iantodd.ontotheradio.netmon"))
+        networkMonitor = monitor
+    }
+
+    private func aacPreferredURL(for url: URL) -> URL {
+        guard url.path.contains("/api/audio/") else { return url }
+        guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        var items = comps.queryItems ?? []
+        if let idx = items.firstIndex(where: { $0.name == "q" }) {
+            items[idx].value = "aac"
+        } else {
+            items.append(URLQueryItem(name: "q", value: "aac"))
+        }
+        comps.queryItems = items
+        return comps.url ?? url
+    }
+
+    private func cacheWorkInBackground(_ work: RadioWork) {
+        guard !offlineStore.isAudioCached(work) else { return }
+        guard inFlightCacheIDs.insert(work.workId).inserted else { return }
+        Task {
+            _ = await self.cacheAudioAndArt(for: work)
+            await MainActor.run {
+                self.inFlightCacheIDs.remove(work.workId)
+                self.refreshOfflineStats()
+            }
+        }
+    }
+
+    private func cacheAudioAndArt(for work: RadioWork) async -> Bool {
+        var cachedAudio = offlineStore.isAudioCached(work)
+        if !cachedAudio, let streamStr = work.streamUrl, let rawURL = URL(string: streamStr) {
+            let fetchURL = aacPreferredURL(for: rawURL)
+            var req = URLRequest(url: fetchURL)
+            req.setValue(ManifoldRadioClient.httpUserAgent, forHTTPHeaderField: "User-Agent")
+            if let (data, resp) = try? await homeSession.data(for: req),
+               let http = resp as? HTTPURLResponse,
+               (200..<300).contains(http.statusCode),
+               !data.isEmpty {
+                let ext = rawURL.pathExtension.isEmpty ? "m4a" : rawURL.pathExtension
+                if offlineStore.saveAudio(data, for: work, ext: ext) != nil {
+                    cachedAudio = true
+                }
+            }
+        }
+        if let artStr = work.artUrl,
+           let artURL = URL(string: artStr),
+           offlineStore.localArtURL(forRemoteURL: artURL) == nil,
+           let artKey = offlineStore.mediaKey(fromArtURL: artURL) {
+            var artReq = URLRequest(url: artURL)
+            artReq.setValue(ManifoldRadioClient.httpUserAgent, forHTTPHeaderField: "User-Agent")
+            if let (artData, artResp) = try? await homeSession.data(for: artReq),
+               let http = artResp as? HTTPURLResponse,
+               (200..<300).contains(http.statusCode) {
+                offlineStore.saveArt(artData, for: artKey)
+            }
+        }
+        return cachedAudio
     }
 
     public func playSimilar(to work: RadioWork) {
