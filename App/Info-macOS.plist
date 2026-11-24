@@ -32,6 +32,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>ManifoldDefaultHub</key>
 	<string>$(MANIFOLD_DEFAULT_HUB)</string>
+	<key>OntoDefaultHomeServer</key>
+	<string>$(OTR_DEFAULT_HOME_SERVER)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

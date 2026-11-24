@@ -82,7 +82,29 @@ public final class RadioEngine {
 
     public let cloudPass = CloudPassStore()
 
+    private static let homeServerDisconnectedKey = "otr.homeServerDisconnected"
+
+    /// Validates a build-time default home server URL injected via Info.plist (`OntoDefaultHomeServer`).
+    nonisolated public static func resolveDefaultHomeServer(_ raw: String?) -> String {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty,
+              !trimmed.contains("$("),
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host,
+              !host.isEmpty else {
+            return ""
+        }
+        return RadioKeychain.normalizedServer(trimmed)
+    }
+
+    nonisolated public static var defaultHomeServerURL: String {
+        resolveDefaultHomeServer(Bundle.main.object(forInfoDictionaryKey: "OntoDefaultHomeServer") as? String)
+    }
+
     private let defaults: UserDefaults
+    private let homeSession: URLSession
     let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
@@ -92,11 +114,19 @@ public final class RadioEngine {
     @ObservationIgnored private var inFlightFitKeys: Set<String> = []
     private let silentQA: Bool
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, homeSession: URLSession = .shared) {
         self.defaults = defaults
+        self.homeSession = homeSession
         let savedHub = defaults.string(forKey: "otr.hubURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.hubURL = savedHub.isEmpty ? ManifoldRadioClient.defaultHub : savedHub
-        self.homeServerURL = defaults.string(forKey: "otr.homeServerURL") ?? ""
+        let savedHome = (defaults.string(forKey: "otr.homeServerURL") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !savedHome.isEmpty {
+            self.homeServerURL = savedHome
+        } else if defaults.bool(forKey: Self.homeServerDisconnectedKey) {
+            self.homeServerURL = ""
+        } else {
+            self.homeServerURL = Self.defaultHomeServerURL
+        }
         self.contributorIssuer = defaults.string(forKey: "otr.contributorIssuer") ?? ""
         self.silentQA = ProcessInfo.processInfo.arguments.contains("-onto.silentQA")
             || ProcessInfo.processInfo.environment["MUSIC_SILENT_QA"] == "1"
@@ -395,11 +425,12 @@ public final class RadioEngine {
             homeServerStatus = "Enter server URL"
             return
         }
+        defaults.set(false, forKey: Self.homeServerDisconnectedKey)
         homeServerURL = server
         saveSettings()
         do {
             if !password.isEmpty {
-                _ = try await HomeRadioClient.signIn(baseURL: server, password: password)
+                _ = try await HomeRadioClient.signIn(baseURL: server, password: password, session: homeSession)
                 RadioKeychain.savePassword(password, server: server)
             }
             try await loadHomeData(server: server)
@@ -427,15 +458,25 @@ public final class RadioEngine {
     }
 
     private func loadHomeData(server: String) async throws {
-        let home = try await HomeRadioClient.fetchHome(baseURL: server)
+        let home = try await HomeRadioClient.fetchHome(baseURL: server, session: homeSession)
         homeWorks = home.tracks
         homeStations = home.stations
         homeServerConnected = true
+        defaults.set(false, forKey: Self.homeServerDisconnectedKey)
         homeServerStatus = "Connected · \(home.tracks.count) tracks"
-        if currentWork == nil, let first = playableQueue.first?.work {
+        if selectedLensID == "lens:radio:late-wire", let firstStation = homeStations.first {
+            selectedLensID = firstStation.id
+        }
+        if !isPlaying, let firstHome = homeWorks.first {
+            let curID = currentWork?.workId ?? ""
+            if currentWork == nil || (!curID.hasPrefix("home:") && !curID.hasPrefix("local:")) {
+                currentWork = firstHome
+                durationSec = Double(firstHome.durationSec ?? 210)
+            }
+        } else if currentWork == nil, let first = playableQueue.first?.work {
             currentWork = first
         }
-        if let now = try? await HomeRadioClient.fetchGlancebarNow(baseURL: server) {
+        if let now = try? await HomeRadioClient.fetchGlancebarNow(baseURL: server, session: homeSession) {
             glancebarAvailable = true
             glancebarNow = now
             startGlancebarPoll()
@@ -450,6 +491,9 @@ public final class RadioEngine {
         if !server.isEmpty {
             RadioKeychain.deletePassword(server: server)
         }
+        defaults.set(true, forKey: Self.homeServerDisconnectedKey)
+        homeServerURL = ""
+        saveSettings()
         homeWorks = []
         homeStations = []
         homeServerConnected = false
@@ -498,7 +542,7 @@ public final class RadioEngine {
     public func refreshGlancebarNow() async {
         let server = RadioKeychain.normalizedServer(homeServerURL)
         guard !server.isEmpty else { return }
-        if let now = try? await HomeRadioClient.fetchGlancebarNow(baseURL: server) {
+        if let now = try? await HomeRadioClient.fetchGlancebarNow(baseURL: server, session: homeSession) {
             glancebarAvailable = true
             glancebarNow = now
         }
@@ -508,7 +552,7 @@ public final class RadioEngine {
         let server = RadioKeychain.normalizedServer(homeServerURL)
         guard !server.isEmpty else { return }
         do {
-            if let now = try await HomeRadioClient.sendGlancebarCommand(baseURL: server, cmd: cmd) {
+            if let now = try await HomeRadioClient.sendGlancebarCommand(baseURL: server, cmd: cmd, session: homeSession) {
                 glancebarAvailable = true
                 glancebarNow = now
             } else {
@@ -564,8 +608,9 @@ public final class RadioEngine {
                 return
             }
             let server = homeServerURL
+            let session = homeSession
             Task {
-                if let picks = try? await HomeRadioClient.fetchStationQueue(baseURL: server, mood: "station:\(stationKey)"),
+                if let picks = try? await HomeRadioClient.fetchStationQueue(baseURL: server, mood: "station:\(stationKey)", session: session),
                    !picks.isEmpty {
                     await MainActor.run {
                         self.homeWorks = picks
@@ -880,8 +925,12 @@ public final class RadioEngine {
     }
 
     public func saveSettings() {
+        let trimmedHome = homeServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
         defaults.set(hubURL.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "otr.hubURL")
-        defaults.set(homeServerURL.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "otr.homeServerURL")
+        defaults.set(trimmedHome, forKey: "otr.homeServerURL")
+        if !trimmedHome.isEmpty {
+            defaults.set(false, forKey: Self.homeServerDisconnectedKey)
+        }
         defaults.set(contributorIssuer.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "otr.contributorIssuer")
     }
 
@@ -930,8 +979,9 @@ public final class RadioEngine {
         guard let token = work.pickToken, !homeServerURL.isEmpty else { return }
         let server = homeServerURL
         let pos = elapsedSec
+        let session = homeSession
         Task {
-            await HomeRadioClient.sendEvent(baseURL: server, pickToken: token, event: event, pos: pos)
+            await HomeRadioClient.sendEvent(baseURL: server, pickToken: token, event: event, pos: pos, session: session)
         }
     }
 

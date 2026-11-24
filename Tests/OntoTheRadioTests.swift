@@ -400,6 +400,73 @@ final class OntoTheRadioTests: XCTestCase {
         XCTAssertTrue(engine.homeStations.isEmpty)
         XCTAssertEqual(engine.homeServerStatus, "Local + Manifold CC0")
     }
+
+    func testResolveDefaultHomeServerValidation() {
+        XCTAssertEqual(RadioEngine.resolveDefaultHomeServer("https://radio.example.com:8447/"), "https://radio.example.com:8447")
+        XCTAssertEqual(RadioEngine.resolveDefaultHomeServer("  http://localhost:8787  "), "http://localhost:8787")
+        XCTAssertEqual(RadioEngine.resolveDefaultHomeServer(""), "")
+        XCTAssertEqual(RadioEngine.resolveDefaultHomeServer("$(OTR_DEFAULT_HOME_SERVER)"), "")
+        XCTAssertEqual(RadioEngine.resolveDefaultHomeServer("ftp://radio.example.com"), "")
+    }
+
+    @MainActor
+    func testPasswordlessHomeConnectPromotesFirstTrackAndDisconnectPersists() async throws {
+        let suiteName = "com.iantodd.ontotheradio.autoconnect.\(UUID().uuidString)"
+        let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [MockGlancebarURLProtocol.self]
+        let session = URLSession(configuration: cfg)
+
+        MockGlancebarURLProtocol.handler = { req in
+            let url = try XCTUnwrap(req.url)
+            if url.path == "/api/home" {
+                let body = """
+                {
+                  "shelves": [
+                    {
+                      "id": "library",
+                      "title": "Glancebar Lossless",
+                      "tiles": [
+                        {"kind":"song","s":"abc123","title":"Home Track","sub":"Home Artist · Album (2025)","artist":"Home Artist","art":true,"color":"#0ea5e9"}
+                      ]
+                    },
+                    {
+                      "id": "stations",
+                      "title": "Stations",
+                      "tiles": [
+                        {"kind":"station","title":"Dance","sub":"12 tracks","color":"#e11d48","station":{"id":"dance","name":"Dance","color":"#e11d48","count":12}}
+                      ]
+                    }
+                  ]
+                }
+                """.data(using: .utf8)!
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            if url.path == "/api/glancebar/now" {
+                let body = #"{"state":"playing","title":"Blue Monday","artist":"New Order","liked":true,"host":"Mac","epoch":1732400100}"#.data(using: .utf8)!
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            return (HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!, Data())
+        }
+
+        let engine = RadioEngine(defaults: suite, homeSession: session)
+        engine.homeServerURL = "https://mock.example.com"
+        await engine.refreshHomeLibrary()
+
+        XCTAssertTrue(engine.homeServerConnected)
+        XCTAssertEqual(engine.homeWorks.count, 1)
+        XCTAssertEqual(engine.currentWork?.workId, "home:abc123")
+        XCTAssertEqual(engine.selectedLensID, "home-station:dance")
+        XCTAssertTrue(engine.glancebarAvailable)
+        XCTAssertEqual(engine.glancebarRawTitle, "Blue Monday")
+
+        engine.disconnectHomeServer()
+        XCTAssertEqual(engine.homeServerURL, "")
+        let reloaded = RadioEngine(defaults: suite, homeSession: session)
+        XCTAssertEqual(reloaded.homeServerURL, "")
+    }
 }
 
 private final class MockGlancebarURLProtocol: URLProtocol {

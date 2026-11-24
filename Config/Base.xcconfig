@@ -1,3 +1,8 @@
 // Default Manifold hub endpoint (split // for xcconfig comment syntax)
 MANIFOLD_DEFAULT_HUB = https:/$()/manifold-chi.vercel.app
-#include? "~/.config/onto-the-radio/private.xcconfig"
+// Default Glancebar / OtR home server (empty in public repo; override in private.xcconfig)
+OTR_DEFAULT_HOME_SERVER =
+#include? "../../../.config/onto-the-radio/private.xcconfig"
+#include? "../../../.local/state/onto-the-radio/private.xcconfig"
+#include? "../../../../.config/onto-the-radio/private.xcconfig"
+#include? "../../../../.local/state/onto-the-radio/private.xcconfig"
